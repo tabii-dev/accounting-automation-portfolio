@@ -139,9 +139,9 @@ If your stack is somewhere else, I can usually still help. Most accounting syste
 
 The fastest way to know if I'm the right person to build this for you is a 30-minute call.
 
-- **Upwork:** [https://www.upwork.com/freelancers/~01954f73840469cae5]
-- **LinkedIn:** [www.linkedin.com/in/tabitha-oke-n8n]
-- **Email:** [tabithaeoke@gmail.com]
+- **Upwork:** [tabitha-eoke on Upwork](https://www.upwork.com/freelancers/~01954f73840469cae5)
+- **LinkedIn:** [linkedin.com/in/tabitha-oke-n8n](https://www.linkedin.com/in/tabitha-oke-n8n)
+- **Email:** tabithaeoke@gmail.com
 
 I respond within one business day. If you've already got a brief written, send it over and I'll come to the call with questions, not a sales pitch.
 
