@@ -10,7 +10,7 @@ I'm Tabitha. I trained as a chartered accountant (ICAN ACA, AAT) and I now build
 
 I'm not building you another Bill.com or Tipalti. Those are good products at scale. They also charge per user, per transaction, and assume you have an AP clerk and a procurement function. Most SMB finance teams don't.
 
-The workflows in this portfolio sit on top of the tools you already pay for — QuickBooks Online, Xero, Zoho Books, Stripe, Shopify, your bank, your payroll provider — and stitch them together with logic that matches how your team actually closes the books. You own the workflow. There's no per-user fee. When the engagement ends, the system stays.
+The workflows in this portfolio sit on top of the tools you already pay for: QuickBooks Online, Xero, Zoho Books, Stripe, Shopify, your bank, your payroll provider and stitch them together with logic that matches how your team actually closes the books. You own the workflow. There's no per-user fee. When the engagement ends, the system stays.
 
 ---
 
@@ -32,13 +32,13 @@ You're probably not in the right place if you need an SAP migration, a NetSuite 
 
 ## What I build
 
-Seven service areas. Each named below with an honest status flag — what's shipped, what's coming, and what proof I can show you.
+Seven service areas. Each named below with an honest status flag; what's shipped, what's coming, and what proof I can show you.
 
 ### Accounts payable automation
 
 Invoice intake from a shared inbox or OCR. Vendor lookup against your live chart of accounts. Materiality-based approval routing through Slack. Pre-posting validation gate that catches balance errors, COA mismatches, closed periods, and out-of-scope authorisations before they hit the ledger. Idempotent retry handling. Immutable audit log.
 
-**Shipped.** The AP Invoice Orchestrator processes a real invoice from webhook to QuickBooks Bill in under 90 seconds, with five distinct execution paths tested end-to-end. [Read the case study →](./ap-invoice-orchestrator/README.md)
+**Shipped.** The AP Invoice Orchestrator processes a real invoice from webhook to QuickBooks Bill in under 90 seconds, with five distinct execution paths tested end-to-end. [Read the case study →](./quickbooks-ap-invoice-automation/README.md)
 
 ### Accounts receivable automation
 
@@ -102,14 +102,14 @@ Everything I build has explicit validation, human-review gates where they matter
 
 ## Portfolio workflows
 
-| Workflow                                                       | Status         | What it does                                                                                                    |
-| -------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------- |
-| [AP Invoice Orchestrator](./ap-invoice-orchestrator/README.md) | Shipped        | Invoice intake to GL posting with 5-check pre-posting gate, materiality-based approval, and immutable audit log |
-| AR Collections Agent                                           | In development | Three-dimensional dunning personalisation with collection activity sync                                         |
-| E-commerce Revenue Reconciliation                              | In development | Stripe and Shopify payout breakdown with fee, refund, and FX handling                                           |
-| Month-End Close Orchestrator                                   | Planned        | Checklist-driven sequencing for sub-ledger rec, accruals, and controller approval                               |
-| Cash Flow Forecasting Engine                                   | Planned        | 13-week rolling forecast with liquidity risk flags                                                              |
-| Client Document Collection Bot                                 | Planned        | Automated KYC, W-9, and engagement letter capture for accounting firms                                          |
+| Workflow                                                                | Status         | What it does                                                                                                    |
+| ----------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------- |
+| [AP Invoice Orchestrator](./quickbooks-ap-invoice-automation/README.md) | Shipped        | Invoice intake to GL posting with 5-check pre-posting gate, materiality-based approval, and immutable audit log |
+| AR Collections Agent                                                    | In development | Three-dimensional dunning personalisation with collection activity sync                                         |
+| E-commerce Revenue Reconciliation                                       | In development | Stripe and Shopify payout breakdown with fee, refund, and FX handling                                           |
+| Month-End Close Orchestrator                                            | Planned        | Checklist-driven sequencing for sub-ledger rec, accruals, and controller approval                               |
+| Cash Flow Forecasting Engine                                            | Planned        | 13-week rolling forecast with liquidity risk flags                                                              |
+| Client Document Collection Bot                                          | Planned        | Automated KYC, W-9, and engagement letter capture for accounting firms                                          |
 
 ---
 
