@@ -1,0 +1,776 @@
+{
+  "name": "AP Invoice — 02 Pre-Posting Gate",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "913d96cb-8a47-4f0a-9af1-c6003a60ca1d",
+      "name": "When Called by Orchestrator",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -208,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\ntry {\n  const lines = item.journalLines;\n\n  if (!Array.isArray(lines) || lines.length === 0) {\n    throw new Error('journalLines is empty or missing');\n  }\n\n  const skipChecks = item.options?.skipChecks ?? [];\n  if (skipChecks.includes('balance')) {\n    return [{ json: { ...item, passed: true, failedCheck: null, reason: null } }];\n  }\n\n  let totalDebits = 0;\n  let totalCredits = 0;\n\n  for (const line of lines) {\n    const amount = parseFloat(line.amount);\n    if (isNaN(amount) || amount < 0) {\n      throw new Error('Invalid amount on account ' + line.accountCode + ': ' + line.amount);\n    }\n    if (line.type === 'debit') {\n      totalDebits += amount;\n    } else if (line.type === 'credit') {\n      totalCredits += amount;\n    } else {\n      throw new Error('Invalid line type on account ' + line.accountCode + ': must be debit or credit, got: ' + line.type);\n    }\n  }\n\n  // Round to 2dp before comparing — avoids floating-point drift (e.g. 0.1 + 0.2 !== 0.3)\n  const roundedDebits = parseFloat(totalDebits.toFixed(2));\n  const roundedCredits = parseFloat(totalCredits.toFixed(2));\n\n  if (roundedDebits !== roundedCredits) {\n    return [{\n      json: {\n        ...item,\n        passed: false,\n        failedCheck: 'balance',\n        reason: 'Debits (' + roundedDebits.toFixed(2) + ') do not equal credits (' + roundedCredits.toFixed(2) + '). Difference: ' + Math.abs(roundedDebits - roundedCredits).toFixed(2)\n      }\n    }];\n  }\n\n  return [{ json: { ...item, passed: true, failedCheck: null, reason: null } }];\n\n} catch (err) {\n  return [{\n    json: {\n      ...item,\n      passed: false,\n      failedCheck: 'balance',\n      reason: 'Balance check error: ' + err.message\n    }\n  }];\n}"
+      },
+      "id": "d18d1aa6-fd48-4e30-98f3-55c15a794af8",
+      "name": "Check 1 — Balance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-balance-01",
+              "leftValue": "={{ $json.passed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e8eb0362-e77b-4145-bcda-e056afcfcb61",
+      "name": "Balance Pass?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        320,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-bal-01",
+              "name": "result",
+              "value": "FAIL",
+              "type": "string"
+            },
+            {
+              "id": "assign-bal-02",
+              "name": "failedCheck",
+              "value": "={{ $json.failedCheck }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-bal-03",
+              "name": "reason",
+              "value": "={{ $json.reason }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bddbc953-74dc-4f3a-b17c-f35ed723d7a9",
+      "name": "Return: Balance Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        320,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst lines = item.journalLines;\nconst coa = item.chartOfAccounts;\n\nif (!Array.isArray(coa) || coa.length === 0) {\n  throw new Error('chartOfAccounts is empty or missing — caller must pass the live COA fetched at workflow start');\n}\n\nconst skipChecks = item.options?.skipChecks ?? [];\nif (skipChecks.includes('coa_validity')) {\n  return [{ json: { ...item, passed: true, failedCheck: null, reason: null } }];\n}\n\ntry {\n  // Build lookup: match by code (AcctNum) first, fall back to id\n  // QB sandbox accounts often have no AcctNum — id is always present\n  const coaByCode = {};\n  const coaById = {};\n  for (const account of coa) {\n    if (account.code) coaByCode[account.code] = account;\n    if (account.id)   coaById[account.id]     = account;\n  }\n\n  const notFound = [];\n  const inactive = [];\n\n  for (const line of lines) {\n    const account = coaByCode[line.accountCode] ?? coaById[line.accountCode];\n    if (!account) {\n      notFound.push(line.accountCode);\n    } else if (account.active === false) {\n      inactive.push(`${line.accountCode} (${account.name})`);\n    }\n  }\n\n  if (notFound.length > 0 || inactive.length > 0) {\n    const reasons = [];\n    if (notFound.length > 0) reasons.push('Not in COA: ' + notFound.join(', '));\n    if (inactive.length > 0) reasons.push('Inactive accounts: ' + inactive.join(', '));\n    return [{ json: { ...item, passed: false, failedCheck: 'coa_validity', reason: reasons.join('. ') } }];\n  }\n\n  return [{ json: { ...item, passed: true, failedCheck: null, reason: null } }];\n\n} catch (err) {\n  return [{ json: { ...item, passed: false, failedCheck: 'coa_validity', reason: 'COA validity check error: ' + err.message } }];\n}"
+      },
+      "id": "6a910d68-306f-4839-a41d-04fb914ab19f",
+      "name": "Check 2 — COA Validity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-coa-01",
+              "leftValue": "={{ $json.passed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c5b4f9a2-96bb-4523-98af-9ba190d1525e",
+      "name": "COA Pass?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        848,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-coa-01",
+              "name": "result",
+              "value": "FAIL",
+              "type": "string"
+            },
+            {
+              "id": "assign-coa-02",
+              "name": "failedCheck",
+              "value": "={{ $json.failedCheck }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-coa-03",
+              "name": "reason",
+              "value": "={{ $json.reason }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "79985ee1-7c57-45f0-9bf3-043d93318d3c",
+      "name": "Return: COA Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        848,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/{{ $('When Called by Orchestrator').item.json.qbRealmId }}/preferences",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "minorversion",
+              "value": "65"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "id": "8458c152-cbbc-4d6b-86eb-d36ce777ddc0",
+      "name": "Fetch QB Period Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "3qEvTuVyuhWNGiXU",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-period-01",
+              "leftValue": "={{ $json.passed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3c04dbc2-a44e-4c85-8b2d-aba82c38261f",
+      "name": "Period Open?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-per-01",
+              "name": "result",
+              "value": "FAIL",
+              "type": "string"
+            },
+            {
+              "id": "assign-per-02",
+              "name": "failedCheck",
+              "value": "={{ $('Check 3 — Period Status').item.json.failedCheck }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-per-03",
+              "name": "reason",
+              "value": "={{ $('Check 3 — Period Status').item.json.reason }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e77b667c-33de-4d0b-bec6-f1c2e42fe27e",
+      "name": "Return: Period Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1536,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const triggerInput = $('When Called by Orchestrator').first().json;\nconst lines = triggerInput.journalLines;\nconst credentialScope = triggerInput.credentialScope;\nconst skipChecks = triggerInput.options?.skipChecks ?? [];\n\nif (skipChecks.includes('user_auth')) {\n  return [{ json: { passed: true, failedCheck: null, reason: null } }];\n}\n\ntry {\n  if (!Array.isArray(credentialScope)) {\n    throw new Error('credentialScope must be an array of authorised account codes or IDs');\n  }\n\n  const unauthorised = [];\n  for (const line of lines) {\n    // Match by accountCode (AcctNum) or accountId — QB sandbox often has no AcctNum\n    const code = line.accountCode;\n    const id   = line.accountId;\n    const authorised = credentialScope.includes(code) || credentialScope.includes(id);\n    if (!authorised) {\n      unauthorised.push(`${code ?? id} (${line.type})`);\n    }\n  }\n\n  if (unauthorised.length > 0) {\n    return [{\n      json: {\n        passed: false,\n        failedCheck: 'user_auth',\n        reason: `Credential not authorised for: ${unauthorised.join(', ')}. Expand credentialScope or route to an authorised approver.`\n      }\n    }];\n  }\n\n  return [{ json: { passed: true, failedCheck: null, reason: null } }];\n\n} catch (err) {\n  return [{\n    json: {\n      passed: false,\n      failedCheck: 'user_auth',\n      reason: 'Auth check error: ' + err.message\n    }\n  }];\n}"
+      },
+      "id": "17b9156e-171f-4912-a3b0-3b6b0424c559",
+      "name": "Check 4 — Auth",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-auth-01",
+              "leftValue": "={{ $json.passed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "82cefe31-1368-47e6-a135-eda7d7986cbc",
+      "name": "Auth Pass?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-auth-01",
+              "name": "result",
+              "value": "FAIL",
+              "type": "string"
+            },
+            {
+              "id": "assign-auth-02",
+              "name": "failedCheck",
+              "value": "={{ $json.failedCheck }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-auth-03",
+              "name": "reason",
+              "value": "={{ $json.reason }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b812db26-454b-4ea3-91cb-02170f9d4dbb",
+      "name": "Return: Auth Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2064,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const triggerInput = $('When Called by Orchestrator').first().json;\n\ntry {\n  const auditLogEntryId = triggerInput.auditLogEntryId;\n  const skipChecks = triggerInput.options?.skipChecks ?? [];\n\n  if (skipChecks.includes('audit_log')) {\n    return [{ json: { passed: true, failedCheck: null, reason: null } }];\n  }\n\n  if (!auditLogEntryId) {\n    return [{\n      json: {\n        passed: false,\n        failedCheck: 'audit_log',\n        reason: 'auditLogEntryId is missing. The caller must write a PENDING audit log entry before calling this gate — the ID proves the log was created.'\n      }\n    }];\n  }\n\n  // UUID v4 format — rejects empty strings, partial IDs, placeholder values\n  const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n  if (!uuidV4.test(String(auditLogEntryId))) {\n    return [{\n      json: {\n        passed: false,\n        failedCheck: 'audit_log',\n        reason: 'auditLogEntryId is not a valid UUID v4: ' + auditLogEntryId + '. Confirm the audit log write succeeded and the ID was passed through correctly.'\n      }\n    }];\n  }\n\n  return [{ json: { passed: true, failedCheck: null, reason: null } }];\n\n} catch (err) {\n  return [{\n    json: {\n      passed: false,\n      failedCheck: 'audit_log',\n      reason: 'Audit log confirm error: ' + err.message\n    }\n  }];\n}"
+      },
+      "id": "ae4f5f8a-b7ed-4041-afc5-62322398b726",
+      "name": "Check 5 — Audit Log Confirm",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-audit-01",
+              "leftValue": "={{ $json.passed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "03be14d9-bd96-4c85-832e-9554a52b5365",
+      "name": "Audit Log Pass?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-aud-01",
+              "name": "result",
+              "value": "FAIL",
+              "type": "string"
+            },
+            {
+              "id": "assign-aud-02",
+              "name": "failedCheck",
+              "value": "={{ $json.failedCheck }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-aud-03",
+              "name": "reason",
+              "value": "={{ $json.reason }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0833f31d-2ae3-450f-94ac-96a0d025b80b",
+      "name": "Return: Audit Log Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2576,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-pass-01",
+              "name": "result",
+              "value": "PASS",
+              "type": "string"
+            },
+            {
+              "id": "assign-pass-02",
+              "name": "dryRun",
+              "value": "={{ $('When Called by Orchestrator').item.json.options?.dryRun ?? false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b5f1797-440b-45d4-9416-f9afd2d145fb",
+      "name": "Return: PASS",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2816,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## CHECK 1 — BALANCE\n\nSum of debits must equal sum of credits rounded to 2dp.\n\nFails fast on malformed line types or amounts.\n\n**Skip:** `options.skipChecks: ['balance']`",
+        "height": 664,
+        "width": 800
+      },
+      "id": "aed9c489-e180-4d15-88b9-70acbbb8858f",
+      "name": "Sticky Note — Check 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -304,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## CHECK 2 — COA VALIDITY\n\nEvery `accountCode` in journalLines must exist in the caller-provided `chartOfAccounts` array and have `active: true`.\n\nMatches by code, not name.\n\n**Skip:** `options.skipChecks: ['coa_validity']`",
+        "height": 664,
+        "width": 436,
+        "color": 2
+      },
+      "id": "3d91fe07-8e6b-4cdc-8e12-9bf2a4675367",
+      "name": "Sticky Note — Check 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## CHECK 3 — PERIOD STATUS\n\nHTTP GET to QB Preferences endpoint returns `BookCloseDate`. The `periodDate` passed by the caller must be after that date.\n\nIf `BookCloseDate` is absent (books never formally closed), the check passes.\n\n**Skip:** `options.skipChecks: ['period_status']`",
+        "height": 652,
+        "width": 596,
+        "color": 3
+      },
+      "id": "71aef5b8-5d31-45d0-8643-244fd86baa61",
+      "name": "Sticky Note — Check 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## CHECK 4 — USER AUTHORISATION\n\nEvery `accountCode` in journalLines must appear in the caller-provided `credentialScope` array.\n\nPrevents AP credentials from posting to revenue or BS accounts outside their scope.\n\n**Skip:** `options.skipChecks: ['user_auth']` — single-user SMBs only.",
+        "height": 668,
+        "width": 532,
+        "color": 4
+      },
+      "id": "eef79bdf-2cb3-4edd-bf46-28416ecdc0bf",
+      "name": "Sticky Note — Check 4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1728,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## CHECK 5 — AUDIT LOG CONFIRM\n\nVerifies `auditLogEntryId` is a valid UUID v4. The caller must write a PENDING audit log entry **before** calling this gate.\n\nThis check proves the log was created. If missing or malformed, the log was never written.\n\n**Skip:** `options.skipChecks: ['audit_log']`",
+        "height": 748,
+        "width": 724,
+        "color": 5
+      },
+      "id": "ff833dcb-dbf1-4bea-88e8-b16a5bcec1a3",
+      "name": "Sticky Note — Check 5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2288,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "content": "**WHY HTTP REQUEST, NOT QB NODE**\n\nThe QB Preferences API (`/v3/company/{realmId}/preferences`) holds `BookCloseDate` — the only field that reliably signals a closed period. The native n8n-nodes-base.quickbooks node does not expose the Preferences resource.\n\nThis node uses HTTP Request + QB OAuth2 credential for the same auth context with direct endpoint access. Replace `YOUR_QB_CREDENTIAL_ID` with your QuickBooks OAuth2 credential ID on import.",
+        "height": 220,
+        "width": 648,
+        "color": 6
+      },
+      "id": "faa2fa66-1b6d-46e4-80a2-c2aead999be7",
+      "name": "Sticky Note — QB Explanation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const bookCloseDate = $input.first().json.Preferences?.AccountingInfoPrefs?.BookCloseDate;\nconst periodDate = $('When Called by Orchestrator').item.json.periodDate;\n\ntry {\n  // No close date set → period is open by default\n  if (!bookCloseDate || bookCloseDate === '') {\n    return [{\n      json: {\n        passed: true,\n        failedCheck: null,\n        reason: 'No book close date set in QuickBooks; period is open by default.'\n      }\n    }];\n  }\n\n  // Both dates present → compare\n  const periodOpen = new Date(periodDate) > new Date(bookCloseDate);\n\n  return [{\n    json: {\n      passed: periodOpen,\n      failedCheck: periodOpen ? null : 'period_status',\n      reason: periodOpen\n        ? `Period date ${periodDate} is after close date ${bookCloseDate}; period is open.`\n        : `Period date ${periodDate} is on or before close date ${bookCloseDate}; period is closed.`\n    }\n  }];\n} catch (err) {\n  throw new Error(`Period status check failed: ${err.message}. Inputs: periodDate=${periodDate}, bookCloseDate=${bookCloseDate}`);\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        208
+      ],
+      "id": "94c3191c-fe28-4c7c-9cb3-04f771dfbed7",
+      "name": "Check 3 — Period Status"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Called by Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Check 1 — Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check 1 — Balance": {
+      "main": [
+        [
+          {
+            "node": "Balance Pass?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Balance Pass?": {
+      "main": [
+        [
+          {
+            "node": "Check 2 — COA Validity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return: Balance Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check 2 — COA Validity": {
+      "main": [
+        [
+          {
+            "node": "COA Pass?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "COA Pass?": {
+      "main": [
+        [
+          {
+            "node": "Fetch QB Period Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return: COA Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch QB Period Status": {
+      "main": [
+        [
+          {
+            "node": "Check 3 — Period Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Period Open?": {
+      "main": [
+        [
+          {
+            "node": "Check 4 — Auth",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return: Period Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check 4 — Auth": {
+      "main": [
+        [
+          {
+            "node": "Auth Pass?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth Pass?": {
+      "main": [
+        [
+          {
+            "node": "Check 5 — Audit Log Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return: Auth Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check 5 — Audit Log Confirm": {
+      "main": [
+        [
+          {
+            "node": "Audit Log Pass?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Log Pass?": {
+      "main": [
+        [
+          {
+            "node": "Return: PASS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return: Audit Log Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check 3 — Period Status": {
+      "main": [
+        [
+          {
+            "node": "Period Open?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b46e8180-289a-4af3-a062-2b636f7e1db3",
+  "meta": {
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "6oZ7z5WgHEm2NGql",
+  "tags": []
+}

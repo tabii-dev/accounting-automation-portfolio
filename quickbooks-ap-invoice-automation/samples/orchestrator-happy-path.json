@@ -1,0 +1,21 @@
+{
+  "vendorId": "32",
+  "invoiceNumber": "CALTEL-2026-0512",
+  "invoiceDate": "2026-05-05",
+  "dueDate": "2026-06-04",
+  "currency": "USD",
+  "totalAmount": 142.85,
+  "lineItems": [
+    {
+      "description": "Business phone service — May 2026",
+      "amount": 142.85,
+      "expenseAccountCode": "77",
+      "poNumber": null
+    }
+  ],
+  "attachmentUrl": "https://files.example.com/invoices/CALTEL-2026-0512.pdf",
+  "submittedBy": "ocr-bot@hargreavesfinch.co.uk",
+  "clientId": "client-hargreavesfinch",
+  "qbRealmId": "9341457036057924",
+  "entryType": "recurring_supplier_monthly"
+}

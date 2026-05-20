@@ -1,0 +1,21 @@
+{
+  "vendorId": "48",
+  "invoiceNumber": "PGE-2026-0042",
+  "invoiceDate": "2026-05-01",
+  "dueDate": "2026-05-31",
+  "currency": "USD",
+  "totalAmount": 487.5,
+  "lineItems": [
+    {
+      "description": "Electricity — May 2026 (DUPLICATE TEST)",
+      "amount": 487.5,
+      "expenseAccountCode": "24",
+      "poNumber": null
+    }
+  ],
+  "attachmentUrl": "https://files.example.com/invoices/PGE-2026-0042.pdf",
+  "submittedBy": "ocr-bot@hargreavesfinch.co.uk",
+  "clientId": "client-hargreavesfinch",
+  "qbRealmId": "9341457036057924",
+  "entryType": "recurring_supplier_monthly"
+}

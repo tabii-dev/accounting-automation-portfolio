@@ -1,0 +1,240 @@
+{
+  "name": "AP Invoice — 99 Error Notifier",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        -48
+      ],
+      "id": "2e6e329f-3c79-459d-b8b9-7a471771d455",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bc572fc6-3c74-42fd-9947-488b4954f287",
+              "name": "workflow_name",
+              "value": "={{ $json.workflow.name }}",
+              "type": "string"
+            },
+            {
+              "id": "8abfc9bd-8a35-4b82-90b4-8fee33da3a85",
+              "name": "failed_node",
+              "value": "={{ $json.execution.lastNodeExecuted }}",
+              "type": "string"
+            },
+            {
+              "id": "123634dc-36c0-4a60-b503-eb5b60a83b7d",
+              "name": "error_message",
+              "value": "={{ $json.execution.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "086c3a02-f434-4a4b-bac0-abbd4a2d49bc",
+              "name": "execution_url",
+              "value": "={{ $json.execution.url }}",
+              "type": "string"
+            },
+            {
+              "id": "8c887bfc-275a-40dd-b9b9-6c42e75a4711",
+              "name": "execution_id",
+              "value": "={{ $json.execution.id }}",
+              "type": "number"
+            },
+            {
+              "id": "771d0c7c-4c70-46d9-8835-cf1c61f788d1",
+              "name": "failed_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "5ce8c930-f6ca-49d1-97a3-60838c697f31",
+              "name": "mode",
+              "value": "={{ $json.execution.mode }}",
+              "type": "string"
+            },
+            {
+              "id": "0ac4b67f-10c2-440f-ae48-7f29d208d851",
+              "name": "=workflow_id",
+              "value": "={{ $json.workflow.id }}",
+              "type": "string"
+            },
+            {
+              "id": "6b7b11e3-8754-4301-8416-4218b25d1b9d",
+              "name": "error_stack",
+              "value": "={{ $json.execution.error.stack \n\n '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f931335d-aed7-414f-94d6-4ccb2b810aa7",
+              "name": "client_id",
+              "value": "={{ $json.execution.error.context?.clientId || $json.execution.data?.resultData?.runData?.['Webhook Trigger']?.[0]?.data?.main?.[0]?.[0]?.json?.body?.clientId || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "81f61218-c0b5-418b-a1a7-5a73e464414e",
+              "name": "invoice_number",
+              "value": "={{ $json.execution.error.context?.invoiceNumber || $json.execution.data?.resultData?.runData?.['Webhook Trigger']?.[0]?.data?.main?.[0]?.[0]?.json?.body?.invoiceNumber || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "1a7ad3df-2304-41ad-9854-9b54a39f426e",
+              "name": "audit_log_entry_id",
+              "value": "={{ $json.execution.error.context?.auditLogEntryId || null }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -192,
+        -48
+      ],
+      "id": "6cdd86b2-c423-4f9b-9096-467286964835",
+      "name": "Extract Error Context"
+    },
+    {
+      "parameters": {
+        "fromEmail": "resultise@resultise.com",
+        "toEmail": "tabithaeoke@gmail.com",
+        "subject": "={{ '🚨 [AP] Workflow failed: ' + $('Extract Error Context').item.json.workflow_name }}",
+        "html": "=<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<title>Workflow Error</title>\n</head>\n<body style=\"margin:0;padding:0;background:#F9F8F6;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#1A1D23;\">\n\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\" style=\"background:#F9F8F6;padding:40px 16px;\">\n<tr><td align=\"center\">\n\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"560\" style=\"max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #EAE9E4;\">\n\n<!-- HEADER -->\n<tr>\n<td style=\"background:#7F1D1D;padding:20px 32px;\">\n<div style=\"font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-weight:700;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;color:#FCA5A5;\">\n⚠ Workflow Error — Action Needed\n</div>\n</td>\n</tr>\n\n<!-- BODY -->\n<tr>\n<td style=\"padding:32px;\">\n\n<h1 style=\"margin:0 0 8px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:22px;font-weight:700;line-height:1.2;color:#1A1D23;\">\nA workflow failed\n</h1>\n\n<p style=\"margin:0 0 24px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#6B7280;line-height:1.6;\">\nAn execution in n8n errored out and needs review. Details below.\n</p>\n\n<!-- Details table -->\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\" style=\"margin:0 0 24px;border-collapse:collapse;\">\n<tr>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;width:130px;vertical-align:top;\">Workflow</td>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.workflow_name }}</td>\n</tr>\n<tr>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Failed Node</td>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#1A1D23;font-weight:600;\">{{ $('Extract Error Context').item.json.failed_node }}</td>\n</tr>\n<tr>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Error</td>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'SF Mono',Consolas,Monaco,monospace;font-size:13px;color:#7F1D1D;background:#FEF2F2;padding:10px 12px;border-radius:6px;\">{{ $('Extract Error Context').item.json.error_message }}</td>\n</tr>\n<tr>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Time</td>\n<td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.failed_at }}</td>\n</tr>\n<tr>\n<td style=\"padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Mode</td>\n<td style=\"padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.mode }}</td>\n</tr>\n</table>\n\n<!-- CTA -->\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin:0 0 8px;\">\n<tr>\n<td style=\"background:#1A1D23;border-radius:8px;\">\n<a href=\"{{ $('Extract Error Context').item.json.execution_url }}\" style=\"display:inline-block;padding:12px 24px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;\">\nView execution in n8n →\n</a>\n</td>\n</tr>\n</table>\n\n<p style=\"margin:24px 0 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:11px;color:#9CA3AF;line-height:1.6;\">\nExecution ID: {{ $('Extract Error Context').item.json.execution_id }}<br>\nLogged to Supabase error_log table for historical tracking.\n</p>\n\n</td>\n</tr>\n\n</table>\n\n</td></tr>\n</table>\n\n</body>\n</html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        256,
+        -96
+      ],
+      "id": "7224f21a-a1ed-408b-a833-0cd22ade13a8",
+      "name": "Notify on Failure",
+      "webhookId": "c4117d7d-6d46-480c-9022-541c47b6beb0",
+      "credentials": {
+        "smtp": {
+          "id": "uRagLtrXkHHBC3Nt",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO error_log (\n  workflow_name,\n  workflow_id,\n  failed_node,\n  error_message,\n  error_stack,\n  execution_url,\n  execution_id,\n  execution_mode,\n  failed_at,\n  notified,\n  client_id,\n  invoice_number,\n  audit_log_entry_id\n) VALUES (\n  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13\n)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.workflow_name, $json.workflow_id, $json.failed_node, $json.error_message, $json.error_stack, $json.execution_url, $json.execution_id, $json.execution_mode || $json.mode, $json.failed_at, true, $json.client_id, $json.invoice_number, $json.audit_log_entry_id || null] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        16,
+        -48
+      ],
+      "id": "b5946d89-73f1-465a-abff-cff544aa75f9",
+      "name": "Log Error",
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0B2SR7122E",
+          "mode": "list",
+          "cachedResultName": "ap-errors"
+        },
+        "text": "=🚨 *AP Workflow Error*  *Workflow:* {{ $('Extract Error Context').item.json.workflow_name }} *Failed Node:* {{ $('Extract Error Context').item.json.failed_node }} *Error:* {{ $('Extract Error Context').item.json.error_message }}  *Context:* - Client: {{ $('Extract Error Context').item.json.client_id }} - Invoice: {{ $('Extract Error Context').item.json.invoice_number }} - Mode: {{ $('Extract Error Context').item.json.mode }} - Failed at: {{ $('Extract Error Context').item.json.failed_at }}  <{{ $('Extract Error Context').item.json.execution_url }}\nView execution in n8n>",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        256,
+        112
+      ],
+      "id": "0c09eb32-86fc-469f-b9e2-b8bde469d3e8",
+      "name": "Alert Team",
+      "webhookId": "c7f1ecaf-1f3b-4263-be4c-aa381cc67e61",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Error Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Error Context": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify on Failure": {
+      "main": [
+        []
+      ]
+    },
+    "Log Error": {
+      "main": [
+        [
+          {
+            "node": "Notify on Failure",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alert Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "3443ee7c-69c6-491b-b998-83dba428a34f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "p6FDWUCC2APrAJyV",
+  "tags": []
+}

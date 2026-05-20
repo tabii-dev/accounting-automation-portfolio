@@ -1,0 +1,1704 @@
+{
+  "name": "AP Invoice — 01 Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, status, target_record_id\nFROM audit_log\nWHERE idempotency_key = $1\n  AND status IN ('PENDING', 'POSTED')\nORDER BY timestamp_initiated DESC\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ $('Webhook Trigger').item.json.body.vendorId + ':' + $('Webhook Trigger').item.json.body.invoiceNumber }}"
+        }
+      },
+      "id": "b56f2000-565c-401c-898f-db7dd99e3f54",
+      "name": "Idempotency: Query Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        48,
+        352
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "idem-rule-posted",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "POSTED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "POSTED"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "idem-rule-pending",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "PENDING",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "PENDING"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "NONE"
+        }
+      },
+      "id": "2d32f6b8-1f28-4bb8-adde-a07df15d40e4",
+      "name": "Idempotency: Switch on Status",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        288,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'ALREADY_POSTED', targetRecordId: $json.target_record_id, auditLogId: $json.id }) }}",
+        "options": {}
+      },
+      "id": "3e939119-954c-48d3-86e8-51377c71ff6a",
+      "name": "Idempotency: Respond Existing 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        528,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "id": "85da565e-2163-4a9b-be28-5971cb2a9b3a",
+      "name": "Idempotency: Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        528,
+        544
+      ],
+      "webhookId": "ap-orchestrator-idempotency-wait"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, status, target_record_id\nFROM audit_log\nWHERE idempotency_key = $1\n  AND status IN ('PENDING', 'POSTED')\nORDER BY timestamp_initiated DESC\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ $('Webhook Trigger').item.json.body.vendorId + ':' + $('Webhook Trigger').item.json.body.invoiceNumber }}"
+        }
+      },
+      "id": "ed02e381-8a3e-4a7d-b773-fcb55f75747f",
+      "name": "Idempotency: Re-query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        768,
+        544
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "still-pending-cond",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "PENDING",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "df1a5983-657a-49da-915e-a258fa236fa4",
+      "name": "Idempotency: IF Still Pending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1008,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'CONFLICT_PENDING', message: 'A concurrent run is processing this invoice. Retry later.' }) }}",
+        "options": {}
+      },
+      "id": "08d424ea-a6f9-4df0-8438-30161f1f97e1",
+      "name": "Idempotency: Respond 409 Conflict",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1136,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-01",
+              "name": "materialityThreshold",
+              "value": 2000,
+              "type": "number"
+            },
+            {
+              "id": "cfg-02",
+              "name": "currency",
+              "value": "USD",
+              "type": "string"
+            },
+            {
+              "id": "cfg-03",
+              "name": "approvedTemplates",
+              "value": "={{ ['recurring_supplier_monthly', 'utilities', 'ad_hoc'] }}",
+              "type": "array"
+            },
+            {
+              "id": "cfg-04",
+              "name": "accountScope",
+              "value": "[\"24\", \"12\", \"15\", \"20\", \"33\", \"77\"]",
+              "type": "array"
+            },
+            {
+              "id": "cfg-06",
+              "name": "priceTolerancePercent",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "cfg-07",
+              "name": "quantityTolerancePercent",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "cfg-08",
+              "name": "bankChangeWindowDays",
+              "value": 14,
+              "type": "number"
+            },
+            {
+              "id": "cfg-09",
+              "name": "approvalTimeoutHours",
+              "value": 24,
+              "type": "number"
+            },
+            {
+              "id": "cfg-10",
+              "name": "auditLogTable",
+              "value": "audit_log",
+              "type": "string"
+            },
+            {
+              "id": "cfg-11",
+              "name": "errorWorkflowId",
+              "value": "PLACEHOLDER_ERROR_WORKFLOW_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-12",
+              "name": "dryRun",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "cfg-13",
+              "name": "qbRealmId",
+              "value": "={{ $('Webhook Trigger').item.json.body.qbRealmId }}",
+              "type": "string"
+            },
+            {
+              "id": "cfg-14",
+              "name": "qbApiBaseUrl",
+              "value": "https://sandbox-quickbooks.api.intuit.com",
+              "type": "string"
+            },
+            {
+              "id": "cfg-15",
+              "name": "slackChannelApTeam",
+              "value": "#ap-team",
+              "type": "string"
+            },
+            {
+              "id": "cfg-16",
+              "name": "slackFinanceManagerUserId",
+              "value": "PLACEHOLDER_SLACK_FINANCE_MANAGER_USER_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-17",
+              "name": "workflowVersion",
+              "value": "0.1.0",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7b74d64a-a17b-4f60-89dd-1c4e3c82c7ca",
+      "name": "Set: Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1504,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Set: Configuration').item.json.qbApiBaseUrl + '/v3/company/' + $('Set: Configuration').item.json.qbRealmId + '/query?query=SELECT * FROM Account MAXRESULTS 1000&minorversion=70' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a082d107-24e2-4e22-8387-a23a7c1b978d",
+      "name": "Fetch Live COA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1744,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "3qEvTuVyuhWNGiXU",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "vendor",
+        "vendorId": "={{ $('Webhook Trigger').item.json.body.vendorId }}"
+      },
+      "id": "380d0e5d-d0b3-4fb9-bdb3-c80859fa9019",
+      "name": "Fetch Vendor Record",
+      "type": "n8n-nodes-base.quickbooks",
+      "typeVersion": 1,
+      "position": [
+        1984,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "3qEvTuVyuhWNGiXU",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const triggerInput = $('Webhook Trigger').first().json.body;\nconst vendor = $('Fetch Vendor Record').first().json;\nconst config = $('Set: Configuration').first().json;\n\ntry {\n  const bankChangeWindowDays = parseInt(config.bankChangeWindowDays, 10);\n  if (isNaN(bankChangeWindowDays) || bankChangeWindowDays <= 0) {\n    throw new Error('Invalid bankChangeWindowDays in config: ' + config.bankChangeWindowDays);\n  }\n\n  // QB Vendor.MetaData.LastUpdatedTime is the proxy for bank-detail changes (see assumption A4)\n  const lastUpdated = vendor.MetaData?.LastUpdatedTime;\n\n  if (!lastUpdated) {\n    return [{\n      json: {\n        ...triggerInput,\n        fraudCheck: {\n          status: 'FLAG',\n          reason: 'Vendor record missing MetaData.LastUpdatedTime — treating as suspicious by default'\n        }\n      }\n    }];\n  }\n\n  const updateTs = new Date(lastUpdated).getTime();\n  const nowTs = Date.now();\n  if (isNaN(updateTs)) {\n    throw new Error('Cannot parse vendor LastUpdatedTime: ' + lastUpdated);\n  }\n\n  const daysSinceUpdate = Math.floor((nowTs - updateTs) / (1000 * 60 * 60 * 24));\n\n  if (daysSinceUpdate <= bankChangeWindowDays) {\n    return [{\n      json: {\n        ...triggerInput,\n        fraudCheck: {\n          status: 'FLAG',\n          reason: 'Vendor record was updated ' + daysSinceUpdate + ' days ago (within ' + bankChangeWindowDays + '-day fraud window). Manual confirmation required before posting.',\n          lastUpdated: lastUpdated,\n          daysSinceUpdate: daysSinceUpdate\n        }\n      }\n    }];\n  }\n\n  return [{\n    json: {\n      ...triggerInput,\n      fraudCheck: {\n        status: 'PASS',\n        lastUpdated: lastUpdated,\n        daysSinceUpdate: daysSinceUpdate\n      }\n    }\n  }];\n\n} catch (err) {\n  // Fail safe — any error → FLAG. Never silently pass a fraud check.\n  return [{\n    json: {\n      ...triggerInput,\n      fraudCheck: {\n        status: 'FLAG',\n        reason: 'Fraud check error (failed safe): ' + err.message\n      }\n    }\n  }];\n}"
+      },
+      "id": "5d15ee91-e620-452c-a1a6-e1348af7ca72",
+      "name": "Vendor Fraud Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2416,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fraud-cond",
+              "leftValue": "={{ $json.fraudCheck.status }}",
+              "rightValue": "FLAG",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bc693245-d8ca-4501-b0d2-f2accac20409",
+      "name": "IF: Fraud Flag?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2656,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'BLOCKED_FRAUD', reason: $json.fraudCheck && $json.fraudCheck.reason ? $json.fraudCheck.reason : 'vendor fraud check failed', lastUpdated: $json.fraudCheck && $json.fraudCheck.lastUpdated ? $json.fraudCheck.lastUpdated : null, daysSinceUpdate: $json.fraudCheck && $json.fraudCheck.daysSinceUpdate !== undefined ? $json.fraudCheck.daysSinceUpdate : null }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "3a9f206d-220c-4208-a5ca-c8d5499dbc1c",
+      "name": "Respond 422: Fraud BLOCK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        3008,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const triggerInput = $('Webhook Trigger').first().json.body;\n// Fetch Live COA returns one item containing { QueryResponse: { Account: [...] } }\nconst coaList = $('Fetch Live COA').first().json.QueryResponse?.Account ?? [];\n\ntry {\n  const lineItems = triggerInput.lineItems;\n  if (!Array.isArray(lineItems) || lineItems.length === 0) {\n    throw new Error('No line items in invoice payload');\n  }\n\n  if (!Array.isArray(coaList) || coaList.length === 0) {\n    throw new Error('Chart of accounts is empty — Fetch Live COA returned no Account rows');\n  }\n\n  // Find AP Control account (assumption A8)\n  const apControl = coaList.find(a => a.AccountType === 'Accounts Payable');\n  if (!apControl) {\n    throw new Error('No Accounts Payable control account found in live COA');\n  }\n\n  const journalLines = [];\n  const qbBillLines = [];\n\n  for (const li of lineItems) {\n    // Match by AcctNum (QB's account code field) OR by Id\n    const expenseAccount = coaList.find(a => a.AcctNum === li.expenseAccountCode || a.Id === li.expenseAccountCode);\n    if (!expenseAccount) {\n      throw new Error('Expense account not found in live COA: ' + li.expenseAccountCode);\n    }\n\n    const amount = parseFloat(li.amount);\n    if (isNaN(amount) || amount <= 0) {\n      throw new Error('Invalid line amount: ' + li.amount);\n    }\n    const rounded = parseFloat(amount.toFixed(2));\n\n    // Journal-entry shape (for Pre-Posting Gate balance check)\n    journalLines.push({\n      accountCode: expenseAccount.AcctNum ?? expenseAccount.Id,\n      accountId: expenseAccount.Id,\n      amount: rounded,\n      type: 'debit',\n      description: li.description\n    });\n\n    // n8n QuickBooks node Bill.Line shape (flat — node wraps into AccountBasedExpenseLineDetail internally)\n    qbBillLines.push({\n      Amount: rounded,\n      DetailType: 'AccountBasedExpenseLineDetail',\n      Description: li.description,\n      accountId: expenseAccount.Id\n    });\n  }\n\n  // Sum of debits — must equal totalAmount to 2dp (gate would catch this, but fail fast here for clarity)\n  const sumDebits = parseFloat(journalLines.reduce((s, l) => s + l.amount, 0).toFixed(2));\n  const totalAmount = parseFloat(parseFloat(triggerInput.totalAmount).toFixed(2));\n  if (sumDebits !== totalAmount) {\n    throw new Error('Line items (' + sumDebits.toFixed(2) + ') do not sum to invoice total (' + totalAmount.toFixed(2) + ')');\n  }\n\n  // Add the AP Control credit line (for the gate's balance check; QB itself auto-handles AP credit)\n  journalLines.push({\n    accountCode: apControl.AcctNum ?? apControl.Id,\n    accountId: apControl.Id,\n    amount: totalAmount,\n    type: 'credit',\n    description: 'AP Control credit for invoice ' + triggerInput.invoiceNumber + ' | vendor ' + triggerInput.vendorId\n  });\n\n  return [{\n    json: {\n      ...triggerInput,\n      journalEntry: {\n        lines: journalLines,\n        totalAmount: totalAmount,\n        currency: triggerInput.currency,\n        periodDate: triggerInput.invoiceDate\n      },\n      qbBillLines: qbBillLines,\n      apControlAccount: {\n        code: apControl.AcctNum,\n        id: apControl.Id,\n        name: apControl.Name\n      }\n    }\n  }];\n\n} catch (err) {\n  // Build failure cannot continue — throw to route to Error Workflow\n  throw new Error('Build journal entry failed: ' + err.message);\n}"
+      },
+      "id": "579ae142-3a1b-48a3-aaaa-a6343395d5fb",
+      "name": "Build Journal Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3408,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function sha256_8(str) {\n  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;\n  for (let i = 0, ch; i < str.length; i++) {\n    ch = str.charCodeAt(i);\n    h1 = Math.imul(h1 ^ ch, 2654435761);\n    h2 = Math.imul(h2 ^ ch, 1597334677);\n  }\n  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);\n  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);\n  const hash = 4294967296 * (2097151 & h2) + (h1 >>> 0);\n  return hash.toString(16).padStart(14, '0').slice(0, 8);\n}\n\nfunction redactValue(key, value) {\n  if (value === null || value === undefined) return value;\n  if (typeof value !== 'string') return value;\n\n  if (/(^|[._-])(vendor|payee|contact|display|company)[._-]?name$/i.test(key) || key === 'DisplayName' || key === 'CompanyName') {\n    return 'V_' + sha256_8(value);\n  }\n\n  if (/(bank|account|iban|sort|routing).*?(number|code|account)/i.test(key) || key === 'BankAccountNumber' || key === 'IBAN') {\n    const cleaned = value.replace(/\\s|-/g, '');\n    return cleaned.length > 4 ? '****' + cleaned.slice(-4) : '****';\n  }\n\n  if (/email/i.test(key)) {\n    const at = value.indexOf('@');\n    if (at <= 0) return 'E_invalid';\n    return 'E_' + sha256_8(value.slice(0, at)) + value.slice(at);\n  }\n\n  return value;\n}\n\nfunction deepRedact(input) {\n  if (input === null || input === undefined) return input;\n  if (Array.isArray(input)) return input.map(deepRedact);\n  if (typeof input !== 'object') return input;\n\n  const result = {};\n  for (const [key, value] of Object.entries(input)) {\n    if (typeof value === 'object' && value !== null) {\n      result[key] = deepRedact(value);\n    } else {\n      result[key] = redactValue(key, value);\n    }\n  }\n  return result;\n}\n\nconst item = $input.first().json;\n\ntry {\n  const redactedPayload = deepRedact(item);\n  const redactedVendorId = item.body?.vendorId\n    ? 'V_' + sha256_8(item.body.vendorId)\n    : (item.vendorId ? 'V_' + sha256_8(item.vendorId) : null);\n\n  const qbResponse = (() => { try { return $('QuickBooks: Create Bill')?.first?.()?.json ?? null; } catch(e) { return null; } })();\n  const redactedQbResponse = qbResponse ? deepRedact(qbResponse) : null;\n\n  return [{\n    json: {\n      ...item,\n      _piiRedacted: true,\n      _piiRedactedAt: new Date().toISOString(),\n      redactedVendorId: redactedVendorId,\n      redactedPayload: redactedPayload,\n      redactedQbResponse: redactedQbResponse\n    }\n  }];\n\n} catch (err) {\n  throw new Error('PII redaction failed (refusing to proceed): ' + err.message);\n}"
+      },
+      "id": "6b721bef-012f-4973-a8ca-4090e1bc0d69",
+      "name": "PII Redact: Pre-Audit-Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3664,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_log (\n  workflow_name, workflow_version, workflow_run_id, actor, actor_type,\n  action_type, target_system, target_realm_id, status, before_state,\n  amount_minor_units, currency_code, materiality_classification, pii_redacted,\n  retention_until, idempotency_key, client_id, notes\n) VALUES (\n  $1, $2, $3, $4, $5,\n  $6, $7, $8, $9, $10::jsonb,\n  $11, $12, $13, $14,\n  $15, $16, $17, $18\n)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ ['ap_invoice_orchestrator', '0.1.0', $execution.id, $('Webhook Trigger').item.json.body.submittedBy, 'service_account', 'POST_BILL', 'quickbooks', $('Set: Configuration').item.json.qbRealmId, 'PENDING', null, Math.round(parseFloat($('Webhook Trigger').item.json.body.totalAmount) * 100), $('Webhook Trigger').item.json.body.currency, 'NOT_APPLICABLE', true, $now.plus({ years: 7 }).toISO(), $('Webhook Trigger').item.json.body.vendorId + ':' + $('Webhook Trigger').item.json.body.invoiceNumber, $('Webhook Trigger').item.json.body.clientId, 'AP invoice ' + $('Webhook Trigger').item.json.body.invoiceNumber + ' from vendor hash ' + $('PII Redact: Pre-Audit-Log').item.json.redactedVendorId + ' | ' + $('Webhook Trigger').item.json.body.lineItems.length + ' line item(s)'] }}"
+        }
+      },
+      "id": "42d35510-314a-4873-89a4-9555eb42dd5c",
+      "name": "Write Audit Log: PENDING",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3888,
+        384
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "6oZ7z5WgHEm2NGql",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/6oZ7z5WgHEm2NGql",
+          "cachedResultName": "AP Invoice — 02 Pre-Posting Gate"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "journalLines": "={{ $('Build Journal Entry').item.json.journalEntry.lines }}",
+            "chartOfAccounts": "={{ ($('Fetch Live COA').first().json.QueryResponse?.Account ?? []).map(a => ({ code: a.AcctNum, id: a.Id, name: a.Name, active: a.Active, type: a.AccountType })) }}",
+            "periodDate": "={{ $('Webhook Trigger').item.json.body.invoiceDate }}",
+            "credentialScope": "={{ $('Webhook Trigger').item.json.body.lineItems.map(l => l.expenseAccountCode).concat(['33']) }}",
+            "auditLogEntryId": "={{ $('Write Audit Log: PENDING').item.json.id }}",
+            "qbRealmId": "={{ $('Set: Configuration').item.json.qbRealmId }}",
+            "options": "={{ ({ dryRun: $('Set: Configuration').item.json.dryRun, skipChecks: [] }) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "journalLines",
+              "displayName": "journalLines",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array"
+            },
+            {
+              "id": "chartOfAccounts",
+              "displayName": "chartOfAccounts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array"
+            },
+            {
+              "id": "periodDate",
+              "displayName": "periodDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "credentialScope",
+              "displayName": "credentialScope",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array"
+            },
+            {
+              "id": "auditLogEntryId",
+              "displayName": "auditLogEntryId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "qbRealmId",
+              "displayName": "qbRealmId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "options",
+              "displayName": "options",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "a8ea9acd-874b-49ca-a34e-d34b04a1ebd8",
+      "name": "Sub: Pre-Posting Gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4128,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "gate-cond",
+              "leftValue": "={{ $json.result }}",
+              "rightValue": "PASS",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4356aebc-a919-495c-95c9-fbcbd1a0b6cc",
+      "name": "IF: Gate Result?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4368,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit_log\nSET status = 'FAILED',\n    timestamp_completed = NOW(),\n    reason = $1,\n    after_state = $2::jsonb\nWHERE id = $3\n  AND status = 'PENDING';",
+        "options": {
+          "queryReplacement": "={{ ['Pre-posting gate failed at check: ' + ($('Sub: Pre-Posting Gate').item.json.failedCheck || 'unknown') + '. Reason: ' + ($('Sub: Pre-Posting Gate').item.json.reason || 'no reason given'), JSON.stringify({ gate_response: $('Sub: Pre-Posting Gate').item.json }), $('Write Audit Log: PENDING').item.json.id] }}"
+        }
+      },
+      "id": "77ba7195-def5-435c-8188-861f864abaa9",
+      "name": "Update Audit Log: FAILED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4160,
+        496
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'GATE_FAILED', failedCheck: $('Sub: Pre-Posting Gate').item.json.failedCheck, reason: $('Sub: Pre-Posting Gate').item.json.reason, auditLogId: $('Write Audit Log: PENDING').item.json.id }) }}",
+        "options": {}
+      },
+      "id": "cec4f494-d033-4790-b07a-fd76a3bac3be",
+      "name": "Respond: Gate Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        4400,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst triggerInput = $('Webhook Trigger').first().json.body;\nconst config = $('Set: Configuration').first().json;\n\ntry {\n  const totalAmount = parseFloat(triggerInput.totalAmount);\n  const materialityThreshold = parseFloat(config.materialityThreshold);\n  const approvedTemplates = Array.isArray(config.approvedTemplates) ? config.approvedTemplates : [];\n  const accountScope = Array.isArray(config.accountScope) ? config.accountScope : [];\n\n  if (isNaN(totalAmount) || isNaN(materialityThreshold)) {\n    throw new Error('Invalid amount or threshold: total=' + triggerInput.totalAmount + ', threshold=' + config.materialityThreshold);\n  }\n\n  const reasons = [];\n\n  // Control 1: monetary threshold\n  if (totalAmount >= materialityThreshold) {\n    reasons.push('amount_above_threshold:' + totalAmount.toFixed(2) + '>=' + materialityThreshold.toFixed(2));\n  }\n\n  // Control 2: entry-type whitelist (assumption A7 — defaults to ad_hoc)\n  const entryType = triggerInput.entryType ?? 'ad_hoc';\n  if (!approvedTemplates.includes(entryType)) {\n    reasons.push('entry_type_not_pre_approved:' + entryType);\n  }\n\n  // Control 3: account scope. Pull journal lines from upstream (carried via Build Journal Entry through PII Redact through audit log node — re-source from Build Journal Entry to be safe)\n  const journalLines = $('Build Journal Entry').item.json.journalEntry?.lines ?? [];\n  const lineAccounts = journalLines.filter(l => l.type === 'debit').map(l => l.accountCode);\n  const outOfScope = lineAccounts.filter(c => !accountScope.includes(c));\n  if (outOfScope.length > 0) {\n    reasons.push('accounts_out_of_scope:' + outOfScope.join(','));\n  }\n\n  // Accounting-domain red flag (assumption A6): round-number invoice, no attachment\n  const isRoundThousand = totalAmount > 0 && totalAmount % 1000 === 0;\n  const hasAttachment = !!triggerInput.attachmentUrl && triggerInput.attachmentUrl.length > 0;\n  if (isRoundThousand && !hasAttachment) {\n    reasons.push('round_number_no_attachment:' + totalAmount.toFixed(2));\n  }\n\n  const decision = reasons.length === 0 ? 'AUTO_POST' : 'REQUIRES_APPROVAL';\n\n  return [{\n    json: {\n      ...item,\n      materialityClassification: decision,\n      routingReasons: reasons,\n      _materialityChecked: true\n    }\n  }];\n\n} catch (err) {\n  // Fail safe: any router error → REQUIRES_APPROVAL (manual review).\n  return [{\n    json: {\n      ...item,\n      materialityClassification: 'REQUIRES_APPROVAL',\n      routingReasons: ['router_error:' + err.message],\n      _materialityChecked: true,\n      _routerErrored: true\n    }\n  }];\n}"
+      },
+      "id": "1669aa53-e65d-4860-86d0-0dd5941f3372",
+      "name": "Materiality and Approval Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4608,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "routing-cond",
+              "leftValue": "={{ $json.materialityClassification }}",
+              "rightValue": "AUTO_POST",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9efce3f6-470e-403e-9638-62a1e68a7693",
+      "name": "IF: Routing Decision?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4848,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "yi2gTqN1xQVuHYFj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/yi2gTqN1xQVuHYFj",
+          "cachedResultName": "AP Invoice — 03 Approval Flow"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "invoiceSummary": "={{ ({ vendorName: ($('Fetch Vendor Record').item.json.DisplayName || $('Fetch Vendor Record').item.json.CompanyName || 'unknown'), vendorIdHash: $('PII Redact: Pre-Audit-Log').item.json.redactedVendorId, invoiceNumber: $('Webhook Trigger').item.json.body.invoiceNumber, invoiceDate: $('Webhook Trigger').item.json.body.invoiceDate, totalAmount: $('Webhook Trigger').item.json.body.totalAmount, currency: $('Webhook Trigger').item.json.body.currency, lineItems: ($('Build Journal Entry').item.json.journalEntry.lines || []).filter(l => l.type === 'debit').map(l => ({ description: l.description, amount: l.amount, accountName: l.accountCode })) }) }}",
+            "journalEntry": "={{ $('Build Journal Entry').item.json.journalEntry }}",
+            "reviewReason": "={{ ($('Materiality and Approval Router').item.json.routingReasons || []).join('; ') || 'no reason given' }}",
+            "submittedBy": "={{ $('Webhook Trigger').item.json.body.submittedBy }}",
+            "auditLogEntryId": "={{ $('Write Audit Log: PENDING').item.json.id }}",
+            "approvalTimeoutHours": "={{ $('Set: Configuration').item.json.approvalTimeoutHours }}",
+            "slackChannelApTeam": "={{ $('Set: Configuration').item.json.slackChannelApTeam }}",
+            "slackFinanceManagerUserId": "={{ $('Set: Configuration').item.json.slackFinanceManagerUserId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "invoiceSummary",
+              "displayName": "invoiceSummary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object"
+            },
+            {
+              "id": "journalEntry",
+              "displayName": "journalEntry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object"
+            },
+            {
+              "id": "reviewReason",
+              "displayName": "reviewReason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "submittedBy",
+              "displayName": "submittedBy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "auditLogEntryId",
+              "displayName": "auditLogEntryId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "approvalTimeoutHours",
+              "displayName": "approvalTimeoutHours",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "slackChannelApTeam",
+              "displayName": "slackChannelApTeam",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "slackFinanceManagerUserId",
+              "displayName": "slackFinanceManagerUserId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "5867362c-aaa8-47b7-a878-52d538ae7fff",
+      "name": "Sub: Approval Request",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5232,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit_log\nSET status = 'REJECTED',\n    timestamp_completed = NOW(),\n    notes = COALESCE(notes, '') || ' | Rejected by ' || COALESCE($1, 'unknown') || ': ' || COALESCE($2, 'no reason provided')\nWHERE id = $3\n  AND status IN ('AWAITING_APPROVAL', 'PENDING')\nRETURNING id, status;",
+        "options": {
+          "queryReplacement": "={{ [($json.approverActor || 'unknown'), ($json.rejectionReason || 'no reason'), $('Write Audit Log: PENDING').item.json.id] }}"
+        }
+      },
+      "id": "14a5975e-57f4-4327-a90d-dc766d2b147d",
+      "name": "Update Audit Log: REJECTED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5824,
+        480
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'REJECTED', approverActor: ($('Switch: Approval Decision').item.json.approverActor || null), rejectionReason: ($('Switch: Approval Decision').item.json.rejectionReason || null), auditLogId: $('Write Audit Log: PENDING').item.json.id }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "df5b7c3e-2cd8-4381-b4ba-b48ec7165bbd",
+      "name": "Respond: Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        6064,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit_log\nSET status = 'TIMEOUT',\n    timestamp_completed = NOW(),\n    notes = COALESCE(notes, '') || ' | Approval timed out at ' || COALESCE($1, NOW()::text) || '; escalation triggered'\nWHERE id = $2\n  AND status IN ('AWAITING_APPROVAL', 'PENDING')\nRETURNING id, status;",
+        "options": {
+          "queryReplacement": "={{ [($json.timeoutAt || $now.toISO()), $('Write Audit Log: PENDING').item.json.id] }}"
+        }
+      },
+      "id": "9e2a5fa5-0048-4231-b0da-dcf8fe65a913",
+      "name": "Update Audit Log: TIMEOUT",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5824,
+        800
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'TIMEOUT', escalationTriggered: true, auditLogId: $('Write Audit Log: PENDING').item.json.id }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "c8720dac-2a7d-47c6-86b5-0e313747d9a2",
+      "name": "Respond: Timeout",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        6064,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "bill",
+        "operation": "create",
+        "VendorRef": "={{ $('Webhook Trigger').item.json.body.vendorId }}",
+        "Line": "={{ $('Build Journal Entry').item.json.qbBillLines }}",
+        "additionalFields": {
+          "DueDate": "={{ $('Webhook Trigger').item.json.body.dueDate }}",
+          "TxnDate": "={{ $('Webhook Trigger').item.json.body.invoiceDate }}"
+        }
+      },
+      "id": "0f8b15bb-cba2-454a-980f-9e0e22c9d995",
+      "name": "QuickBooks: Create Bill",
+      "type": "n8n-nodes-base.quickbooks",
+      "typeVersion": 1,
+      "position": [
+        5264,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "3qEvTuVyuhWNGiXU",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit_log\nSET status = 'POSTED',\n    target_record_id = $1,\n    timestamp_completed = NOW(),\n    after_state = $2::jsonb,\n    materiality_classification = $3,\n    notes = COALESCE(notes, '') || ' | Posted as QB Bill ' || $1\nWHERE id = $4\n  AND status IN ('PENDING', 'AWAITING_APPROVAL');",
+        "options": {
+          "queryReplacement": "={{ [$('QuickBooks: Create Bill').item.json.Id, JSON.stringify({ qbBillId: $('QuickBooks: Create Bill').item.json.Id, txnDate: $('QuickBooks: Create Bill').item.json.TxnDate, dueDate: $('QuickBooks: Create Bill').item.json.DueDate, totalAmt: $('QuickBooks: Create Bill').item.json.TotalAmt, redactedPayload: $('PII Redact: Pre-Audit-Log').item.json.redactedPayload }), $('Materiality and Approval Router').item.json.materialityClassification, $('Write Audit Log: PENDING').item.json.id] }}"
+        }
+      },
+      "id": "f3d683be-d7f9-4bc7-8a17-bb3a396aa3f9",
+      "name": "Update Audit Log: POSTED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5568,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Set: Configuration').item.json.slackChannelApTeam }}"
+        },
+        "text": "={{ ':white_check_mark: AP invoice posted\\nVendor: ' + $('Webhook Trigger').item.json.body.vendorId + '\\nInvoice: ' + $('Webhook Trigger').item.json.body.invoiceNumber + '\\nAmount: ' + $('Webhook Trigger').item.json.body.currency + ' ' + $('Webhook Trigger').item.json.body.totalAmount + '\\nQB Bill ID: ' + $('QuickBooks: Create Bill').item.json.Id + '\\nAudit log: ' + $('Write Audit Log: PENDING').item.json.id }}",
+        "otherOptions": {}
+      },
+      "id": "560d44eb-9e6d-4f8c-98e1-02a9e790c21a",
+      "name": "Slack: Notify AP Team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        5808,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "webhookId": "7379748c-c7cb-461d-8890-0df4fcdc7994",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ result: 'POSTED', targetRecordId: $('QuickBooks: Create Bill').item.json.Id, auditLogId: $('Write Audit Log: PENDING').item.json.id }) }}",
+        "options": {}
+      },
+      "id": "954e4a9f-6432-4dc6-ae30-e94b1cc72ed7",
+      "name": "Respond: 200 Posted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        6048,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## IDEMPOTENCY GUARD\nQueries `audit_log` by `vendorId:invoiceNumber`. POSTED → respond 200 with existing ID. PENDING → wait 30s, re-query, respond 409 if still pending. NONE → continue. Race-safe because `audit_log_idempotency_unique` constraint blocks two PENDING rows for the same key.",
+        "height": 704,
+        "width": 1564,
+        "color": 4
+      },
+      "id": "b492746e-fb60-446d-909d-933f0b9c6655",
+      "name": "Sticky: Idempotency",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## PER-CLIENT CONFIG\nAll thresholds, scopes, timeouts. Override per client at deployment. **Materiality threshold** drives Node 15 routing. **accountScope** drives both Node 15 and Workflow 02's auth check (passed as `credentialScope`). **qbApiBaseUrl** flips sandbox↔production with no logic changes.",
+        "height": 512,
+        "color": 5
+      },
+      "id": "e87202ac-d0ab-465e-91f1-e7dce536469e",
+      "name": "Sticky: Configuration",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## LIVE COA + VENDOR FETCH\nFetched at start of every run. Never hardcode account codes — clients rename accounts and any hardcoded reference breaks silently. The COA list is also passed to Workflow 02 so it validates against the same snapshot. COA fetch uses HTTP Request because n8n's QB node has no `account` resource.",
+        "height": 512,
+        "width": 480,
+        "color": 6
+      },
+      "id": "afbecc5d-14b1-4964-96c7-9dcffc83cb78",
+      "name": "Sticky: Discover, never assume",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1712,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## VENDOR FRAUD CHECK\nFlags vendors whose record was updated within `bankChangeWindowDays`. Uses `MetaData.LastUpdatedTime` as proxy (over-flags — see DESIGN A4). FLAG → hard block + Slack alert. This is the most-defensive control in the workflow.",
+        "height": 464,
+        "width": 896,
+        "color": 3
+      },
+      "id": "bd5a9cc3-d5f0-4f07-a31c-f135fa87c1be",
+      "name": "Sticky: Fraud",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2304,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## BUILD ENTRY + AUDIT LOG (PENDING)\nDR: expense accounts (one per line, from invoice).\nCR: AP Control (auto-credited by QB; included in journal-entry shape for the gate's balance check).\nAudit log written **before** any GL touch — this is the line that makes failures defensible.",
+        "height": 384,
+        "width": 720,
+        "color": 5
+      },
+      "id": "96e0c1c6-17d7-4d36-b6f7-e31dcce2a610",
+      "name": "Sticky: Build + Audit",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3328,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## PRE-POSTING GATE (Workflow 02)\nFive checks: balance, COA validity, period status, user authorisation, audit log confirm. FAIL → update audit log → 422 response. PASS → materiality router.",
+        "height": 560,
+        "width": 480,
+        "color": 7
+      },
+      "id": "64216459-9006-4c69-9b1c-cbc3dbce83b7",
+      "name": "Sticky: Pre-Posting Gate",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4064,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## MATERIALITY ROUTING + POSTING\nThree controls + round-number flag. AUTO_POST → QB → audit POSTED → Slack → 200. REQUIRES_APPROVAL → Approval Request sub → 202. Audit log UPDATE is idempotent on retry (`AND status='PENDING'`).",
+        "height": 896,
+        "width": 1660,
+        "color": 4
+      },
+      "id": "dfb3eb4c-488a-4451-a921-9b97c981d778",
+      "name": "Sticky: Materiality + Posting",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4592,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_log (\n  workflow_name, workflow_version, workflow_run_id, actor, actor_type,\n  action_type, target_system, target_realm_id, status, failure_reason, failed_check,\n  amount_minor_units, currency_code, materiality_classification, pii_redacted,\n  retention_until, idempotency_key, client_id, notes\n) VALUES (\n  $1, $2, $3, $4, $5,\n  $6, $7, $8, 'BLOCKED', $9, 'fraud_check',\n  $10, $11, $12, true,\n  $13, $14, $15, $16\n) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ ['ap_invoice_orchestrator', '0.1.0', $execution.id, $('Webhook Trigger').item.json.body.submittedBy, 'service_account', 'POST_BILL', 'quickbooks', $('Set: Configuration').item.json.qbRealmId, ($json.fraudCheck && $json.fraudCheck.reason) || 'vendor fraud check failed', Math.round(parseFloat($('Webhook Trigger').item.json.body.totalAmount) * 100), $('Webhook Trigger').item.json.body.currency, 'NOT_APPLICABLE', $now.plus({ years: 7 }).toISO(), $('Webhook Trigger').item.json.body.vendorId + ':' + $('Webhook Trigger').item.json.body.invoiceNumber, $('Webhook Trigger').item.json.body.clientId, 'Blocked by vendor fraud check'] }}"
+        }
+      },
+      "id": "61723a9d-e64f-4381-8454-e4c6512a19e1",
+      "name": "Write Audit Log: FRAUD_BLOCKED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2800,
+        176
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit_log\nSET status = 'AWAITING_APPROVAL',\n    materiality_classification = $1,\n    notes = COALESCE(notes, '') || ' | Awaiting approval — reasons: ' || $2\nWHERE id = $3\n  AND status = 'PENDING'\nRETURNING id, status;",
+        "options": {
+          "queryReplacement": "={{ [$('Materiality and Approval Router').item.json.materialityClassification, (($('Materiality and Approval Router').item.json.routingReasons || []).join('; ') || 'no reasons given'), $('Write Audit Log: PENDING').item.json.id] }}"
+        }
+      },
+      "id": "7ae12ff3-2ffc-4e65-ab02-a53f6b0fe2c8",
+      "name": "Update Audit Log: AWAITING_APPROVAL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5040,
+        592
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "appr-approved",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "APPROVED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "APPROVED"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "appr-rejected",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "REJECTED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "REJECTED"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "appr-timeout",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "TIMEOUT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "TIMEOUT"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "UNEXPECTED"
+        }
+      },
+      "id": "d8af1e5b-ec40-4d0e-bd0e-b86ddf1d9dc4",
+      "name": "Switch: Approval Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        5600,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ap-invoice-orchestrator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f6076702-474d-4a65-a7c4-713152732304",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -192,
+        352
+      ],
+      "webhookId": "ap-invoice-orchestrator-webhook"
+    }
+  ],
+  "pinData": {
+    "Webhook Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "galley-husked-thus.ngrok-free.dev",
+            "user-agent": "curl/8.17.0",
+            "content-length": "566",
+            "accept": "*/*",
+            "content-type": "application/json",
+            "x-forwarded-for": "102.89.68.12",
+            "x-forwarded-host": "galley-husked-thus.ngrok-free.dev",
+            "x-forwarded-proto": "https",
+            "accept-encoding": "gzip"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "vendorId": "48",
+            "invoiceNumber": "PGE-2026-0588",
+            "invoiceDate": "2026-05-08",
+            "dueDate": "2026-06-08",
+            "currency": "USD",
+            "totalAmount": 175,
+            "lineItems": [
+              {
+                "description": "Invoice with non-existent account code",
+                "amount": 175,
+                "expenseAccountCode": "9999",
+                "poNumber": null
+              }
+            ],
+            "attachmentUrl": "https://files.example.com/invoices/PGE-2026-0588.pdf",
+            "submittedBy": "ocr-bot@hargreavesfinch.co.uk",
+            "clientId": "client-hargreavesfinch",
+            "qbRealmId": "9341457036057924",
+            "entryType": "recurring_supplier_monthly"
+          },
+          "webhookUrl": "https://galley-husked-thus.ngrok-free.dev/webhook-test/ap-invoice-orchestrator",
+          "executionMode": "test"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Idempotency: Query Audit Log": {
+      "main": [
+        [
+          {
+            "node": "Idempotency: Switch on Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency: Switch on Status": {
+      "main": [
+        [
+          {
+            "node": "Idempotency: Respond Existing 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Idempotency: Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set: Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency: Wait 30s": {
+      "main": [
+        [
+          {
+            "node": "Idempotency: Re-query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency: Re-query": {
+      "main": [
+        [
+          {
+            "node": "Idempotency: IF Still Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency: IF Still Pending?": {
+      "main": [
+        [
+          {
+            "node": "Idempotency: Respond 409 Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set: Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Configuration": {
+      "main": [
+        [
+          {
+            "node": "Fetch Live COA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Live COA": {
+      "main": [
+        [
+          {
+            "node": "Fetch Vendor Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Vendor Record": {
+      "main": [
+        [
+          {
+            "node": "Vendor Fraud Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vendor Fraud Check": {
+      "main": [
+        [
+          {
+            "node": "IF: Fraud Flag?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Fraud Flag?": {
+      "main": [
+        [
+          {
+            "node": "Write Audit Log: FRAUD_BLOCKED",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Journal Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Audit Log: FRAUD_BLOCKED": {
+      "main": [
+        [
+          {
+            "node": "Respond 422: Fraud BLOCK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Journal Entry": {
+      "main": [
+        [
+          {
+            "node": "PII Redact: Pre-Audit-Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PII Redact: Pre-Audit-Log": {
+      "main": [
+        [
+          {
+            "node": "Write Audit Log: PENDING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Audit Log: PENDING": {
+      "main": [
+        [
+          {
+            "node": "Sub: Pre-Posting Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub: Pre-Posting Gate": {
+      "main": [
+        [
+          {
+            "node": "IF: Gate Result?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Gate Result?": {
+      "main": [
+        [
+          {
+            "node": "Materiality and Approval Router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Audit Log: FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Audit Log: FAILED": {
+      "main": [
+        [
+          {
+            "node": "Respond: Gate Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Materiality and Approval Router": {
+      "main": [
+        [
+          {
+            "node": "IF: Routing Decision?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Routing Decision?": {
+      "main": [
+        [
+          {
+            "node": "QuickBooks: Create Bill",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Audit Log: AWAITING_APPROVAL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Audit Log: AWAITING_APPROVAL": {
+      "main": [
+        [
+          {
+            "node": "Sub: Approval Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub: Approval Request": {
+      "main": [
+        [
+          {
+            "node": "Switch: Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: Approval Decision": {
+      "main": [
+        [
+          {
+            "node": "QuickBooks: Create Bill",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Audit Log: REJECTED",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Audit Log: TIMEOUT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Audit Log: REJECTED": {
+      "main": [
+        [
+          {
+            "node": "Respond: Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Audit Log: TIMEOUT": {
+      "main": [
+        [
+          {
+            "node": "Respond: Timeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QuickBooks: Create Bill": {
+      "main": [
+        [
+          {
+            "node": "Update Audit Log: POSTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Audit Log: POSTED": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notify AP Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Notify AP Team": {
+      "main": [
+        [
+          {
+            "node": "Respond: 200 Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Idempotency: Query Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "a7b7616a-c194-47c8-a09d-6533c1fffb7c",
+  "meta": {
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "dtfTcO9fVoAW9Vqg",
+  "tags": []
+}

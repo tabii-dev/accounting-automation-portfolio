@@ -1,0 +1,39 @@
+{
+  "auditLogEntryId": "5f8c4e2a-3b1d-4a6e-9c7f-1e2d3b4a5c6d",
+  "invoiceSummary": {
+    "vendorName": "V_a3f8b2c1",
+    "vendorIdHash": "a3f8b2c1",
+    "invoiceNumber": "INV-2026-0211",
+    "invoiceDate": "2026-05-04",
+    "totalAmount": 8750.0,
+    "currency": "USD",
+    "lineItems": [
+      {
+        "description": "Q2 legal retainer",
+        "amount": 8750.0,
+        "accountName": "Legal & Professional Fees"
+      }
+    ]
+  },
+  "journalEntry": {
+    "lines": [
+      {
+        "accountId": "67",
+        "amount": 8750.0,
+        "type": "debit",
+        "description": "Q2 legal retainer"
+      },
+      {
+        "accountId": "33",
+        "amount": 8750.0,
+        "type": "credit",
+        "description": "AP Control credit for invoice INV-2026-0211"
+      }
+    ]
+  },
+  "reviewReason": "Amount USD 8,750.00 exceeds materiality threshold USD 2,000.00; entry_type 'ad_hoc' not in approved templates",
+  "submittedBy": "ocr-bot@hargreavesfinch.co.uk",
+  "approvalTimeoutHours": 24,
+  "slackChannelApTeam": "#ap-team",
+  "slackFinanceManagerUserId": "U01FINANCEMGR"
+}

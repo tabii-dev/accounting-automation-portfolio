@@ -1,0 +1,39 @@
+{
+  "auditLogEntryId": "7d2a8b4f-5e3c-4f1a-8b9d-2e4f6a8c1d3e",
+  "invoiceSummary": {
+    "vendorName": "V_b4e9c3d2",
+    "vendorIdHash": "b4e9c3d2",
+    "invoiceNumber": "INV-2026-0289",
+    "invoiceDate": "2026-05-06",
+    "totalAmount": 12500.0,
+    "currency": "USD",
+    "lineItems": [
+      {
+        "description": "Marketing consultancy — May 2026 (no PO, no SOW attached)",
+        "amount": 12500.0,
+        "accountName": "Marketing — Consultancy"
+      }
+    ]
+  },
+  "journalEntry": {
+    "lines": [
+      {
+        "accountId": "75",
+        "amount": 12500.0,
+        "type": "debit",
+        "description": "Marketing consultancy — May 2026"
+      },
+      {
+        "accountId": "33",
+        "amount": 12500.0,
+        "type": "credit",
+        "description": "AP Control credit for invoice INV-2026-0289"
+      }
+    ]
+  },
+  "reviewReason": "Amount USD 12,500.00 exceeds threshold USD 2,000.00; account 7510 (Marketing-Consultancy) not in account scope; round-number with no attachment red flag",
+  "submittedBy": "ocr-bot@hargreavesfinch.co.uk",
+  "approvalTimeoutHours": 24,
+  "slackChannelApTeam": "#ap-team",
+  "slackFinanceManagerUserId": "U01FINANCEMGR"
+}

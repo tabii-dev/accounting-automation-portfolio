@@ -1,0 +1,23 @@
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local internal notes (private, not for public repo)
+_internal/
+*.local.md
+NOTES.md
+
+# Environment files (in case they ever land here)
+.env
+.env.local
+*.env
+
+# Logs
+*.log

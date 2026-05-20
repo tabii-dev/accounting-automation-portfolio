@@ -1,0 +1,50 @@
+{
+  "auditLogEntryId": "9e1b3c5d-7a2f-4b6e-9d8c-3f5e7a9b1c4d",
+  "invoiceSummary": {
+    "vendorName": "V_c5d1a4e3",
+    "vendorIdHash": "c5d1a4e3",
+    "invoiceNumber": "INV-2026-0322",
+    "invoiceDate": "2026-05-07",
+    "totalAmount": 4250.0,
+    "currency": "USD",
+    "lineItems": [
+      {
+        "description": "Office equipment — sit-stand desks (3 units)",
+        "amount": 2700.0,
+        "accountName": "Office Equipment"
+      },
+      {
+        "description": "Office supplies — stationery quarterly restock",
+        "amount": 1550.0,
+        "accountName": "Office Supplies"
+      }
+    ]
+  },
+  "journalEntry": {
+    "lines": [
+      {
+        "accountId": "82",
+        "amount": 2700.0,
+        "type": "debit",
+        "description": "Office equipment — sit-stand desks"
+      },
+      {
+        "accountId": "83",
+        "amount": 1550.0,
+        "type": "debit",
+        "description": "Office supplies — stationery"
+      },
+      {
+        "accountId": "33",
+        "amount": 4250.0,
+        "type": "credit",
+        "description": "AP Control credit for invoice INV-2026-0322"
+      }
+    ]
+  },
+  "reviewReason": "Amount USD 4,250.00 exceeds threshold USD 2,000.00 (test scenario: send during low-staffing window to trigger TIMEOUT branch — set approvalTimeoutHours low to verify escalation path)",
+  "submittedBy": "ocr-bot@hargreavesfinch.co.uk",
+  "approvalTimeoutHours": 1,
+  "slackChannelApTeam": "#ap-team",
+  "slackFinanceManagerUserId": "U01FINANCEMGR"
+}

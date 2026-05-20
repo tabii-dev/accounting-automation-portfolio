@@ -1,0 +1,613 @@
+{
+  "name": "AP Invoice — 03 Approval Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "18b0cad9-55a7-4629-8cf8-4c14b8a838f9",
+      "name": "When Called by Orchestrator",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        320,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\ntry {\n  const summary = item.invoiceSummary || {};\n  const lineItems = Array.isArray(summary.lineItems) ? summary.lineItems : [];\n\n  // Defensive: fall back gracefully if any expected field is missing\n  const fmt = (n) => (typeof n === 'number' ? n.toFixed(2) : String(n ?? '?'));\n  const currency = summary.currency || '???';\n\n  const lineItemsText = lineItems.length > 0\n    ? lineItems.map(li => '• ' + (li.description || '(no description)') + ' — ' + currency + ' ' + fmt(li.amount) + ' (' + (li.accountName || 'unknown account') + ')').join('\\n')\n    : '(no line items provided)';\n\n  const approvalMessage = '*AP Invoice Approval Required*\\n\\n' +\n    '*Vendor:* ' + (summary.vendorName || 'unknown') + ' (hash: ' + (summary.vendorIdHash || 'n/a') + ')\\n' +\n    '*Invoice:* ' + (summary.invoiceNumber || 'n/a') + '\\n' +\n    '*Date:* ' + (summary.invoiceDate || 'n/a') + '\\n' +\n    '*Total:* ' + currency + ' ' + fmt(summary.totalAmount) + '\\n\\n' +\n    '*Why this needs review:* ' + (item.reviewReason || 'no reason given') + '\\n\\n' +\n    '*Submitted by:* ' + (item.submittedBy || 'unknown') + '\\n\\n' +\n    '*Line items:*\\n' + lineItemsText + '\\n\\n' +\n    '*Audit log:* ' + (item.auditLogEntryId || 'n/a');\n\n  return [{\n    json: {\n      ...item,\n      approvalMessage: approvalMessage,\n      _summaryBuiltAt: new Date().toISOString()\n    }\n  }];\n\n} catch (err) {\n  // If summary build fails, still proceed with a fallback message — the approver should always see SOMETHING\n  return [{\n    json: {\n      ...item,\n      approvalMessage: 'AP Invoice Approval Required (summary build failed: ' + err.message + ') — see audit log ' + (item.auditLogEntryId || 'n/a'),\n      _summaryBuildError: err.message\n    }\n  }];\n}"
+      },
+      "id": "37e92f42-4701-47e0-a895-87c47215fc47",
+      "name": "Build Approval Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('When Called by Orchestrator').item.json.slackChannelApTeam }}",
+          "cachedResultName": "(set at runtime from input contract)"
+        },
+        "message": "={{ $json.approvalMessage }}",
+        "responseType": "customForm",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "Decision",
+              "fieldLabel": "Decision",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Approve"
+                  },
+                  {
+                    "option": "Reject"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldName": "Notes",
+              "fieldLabel": "Notes",
+              "fieldType": "textarea",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "resumeAmount": "={{ $('When Called by Orchestrator').item.json.approvalTimeoutHours }}"
+            }
+          }
+        }
+      },
+      "id": "ec83f709-42e3-431c-8b6e-fab4e91bfd77",
+      "name": "Slack: Send and Wait",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        800,
+        336
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "webhookId": "3cd306e9-2463-46c9-b429-1aab399f18b6",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "decision-approve",
+                    "leftValue": "={{ $('Slack: Send and Wait').item.json.Decision || ($('Slack: Send and Wait').item.json.data && $('Slack: Send and Wait').item.json.data.Decision) || '' }}",
+                    "rightValue": "Approve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Approve"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "decision-reject",
+                    "leftValue": "={{ $('Slack: Send and Wait').item.json.Decision || ($('Slack: Send and Wait').item.json.data && $('Slack: Send and Wait').item.json.data.Decision) || '' }}",
+                    "rightValue": "Reject",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Reject"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "TIMEOUT"
+        }
+      },
+      "id": "4eb7f319-8f80-4951-86e3-c9d36990d6d5",
+      "name": "Switch: Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1136,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "user",
+        "user": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ (function() { var s = $('Slack: Send and Wait').item.json; if (s.user && typeof s.user === 'object' && s.user.id) return s.user.id; if (s.user && typeof s.user === 'string') return s.user; if (s.responder && typeof s.responder === 'object' && s.responder.id) return s.responder.id; if (s.responder && typeof s.responder === 'string') return s.responder; if (s.payload && s.payload.user && s.payload.user.id) return s.payload.user.id; if (s.event && s.event.user) return (typeof s.event.user === 'string') ? s.event.user : s.event.user.id; return ''; })() }}",
+          "cachedResultName": "(set at runtime from sendAndWait response)"
+        }
+      },
+      "id": "df1f874e-f79a-4597-8b38-25aecfed8029",
+      "name": "Slack: Get Approver",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        944,
+        336
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "webhookId": "cb9222f6-4d38-4dcb-a717-9b5ce68c0a05",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "appr-01",
+              "name": "decision",
+              "value": "APPROVED",
+              "type": "string"
+            },
+            {
+              "id": "appr-02",
+              "name": "approverActor",
+              "value": "={{ ($json.profile && $json.profile.email) || ($json.user && $json.user.profile && $json.user.profile.email) || ($json.profile && $json.profile.real_name) || ($json.user && $json.user.profile && $json.user.profile.real_name) || ($json.real_name) || ($json.name) || ($json.id ? ('slack:' + $json.id) : '') || (($('Slack: Send and Wait').item.json.user && typeof $('Slack: Send and Wait').item.json.user === 'object' && $('Slack: Send and Wait').item.json.user.id) ? ('slack:' + $('Slack: Send and Wait').item.json.user.id) : '') || (($('Slack: Send and Wait').item.json.user && typeof $('Slack: Send and Wait').item.json.user === 'string') ? ('slack:' + $('Slack: Send and Wait').item.json.user) : '') || (($('Slack: Send and Wait').item.json.responder && $('Slack: Send and Wait').item.json.responder.id) ? ('slack:' + $('Slack: Send and Wait').item.json.responder.id) : '') || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "appr-03",
+              "name": "approverDecisionTime",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "appr-04",
+              "name": "approverNotes",
+              "value": "={{ $('Slack: Send and Wait').item.json.Notes || ($('Slack: Send and Wait').item.json.data && $('Slack: Send and Wait').item.json.data.Notes) || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "appr-05",
+              "name": "auditLogEntryId",
+              "value": "={{ $('When Called by Orchestrator').item.json.auditLogEntryId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "51ca9534-fccd-4994-b8b7-973d4c8bcd56",
+      "name": "Build APPROVED Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "rej-01",
+              "name": "decision",
+              "value": "REJECTED",
+              "type": "string"
+            },
+            {
+              "id": "rej-02",
+              "name": "approverActor",
+              "value": "={{ ($json.profile && $json.profile.email) || ($json.user && $json.user.profile && $json.user.profile.email) || ($json.profile && $json.profile.real_name) || ($json.user && $json.user.profile && $json.user.profile.real_name) || ($json.real_name) || ($json.name) || ($json.id ? ('slack:' + $json.id) : '') || (($('Slack: Send and Wait').item.json.user && typeof $('Slack: Send and Wait').item.json.user === 'object' && $('Slack: Send and Wait').item.json.user.id) ? ('slack:' + $('Slack: Send and Wait').item.json.user.id) : '') || (($('Slack: Send and Wait').item.json.user && typeof $('Slack: Send and Wait').item.json.user === 'string') ? ('slack:' + $('Slack: Send and Wait').item.json.user) : '') || (($('Slack: Send and Wait').item.json.responder && $('Slack: Send and Wait').item.json.responder.id) ? ('slack:' + $('Slack: Send and Wait').item.json.responder.id) : '') || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "rej-03",
+              "name": "approverDecisionTime",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "rej-04",
+              "name": "rejectionReason",
+              "value": "={{ $('Slack: Send and Wait').item.json.Notes || ($('Slack: Send and Wait').item.json.data && $('Slack: Send and Wait').item.json.data.Notes) || 'No reason provided' }}",
+              "type": "string"
+            },
+            {
+              "id": "rej-05",
+              "name": "auditLogEntryId",
+              "value": "={{ $('When Called by Orchestrator').item.json.auditLogEntryId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cf96d60b-99c7-4639-8016-76732eb3c044",
+      "name": "Build REJECTED Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1520,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "to-01",
+              "name": "decision",
+              "value": "TIMEOUT",
+              "type": "string"
+            },
+            {
+              "id": "to-02",
+              "name": "timeoutAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "to-03",
+              "name": "escalationTriggered",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "to-04",
+              "name": "auditLogEntryId",
+              "value": "={{ $('When Called by Orchestrator').item.json.auditLogEntryId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "77eaf914-e5fb-41ff-9115-37744c6c8424",
+      "name": "Build TIMEOUT Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1280,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "user",
+        "user": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('When Called by Orchestrator').item.json.slackFinanceManagerUserId }}",
+          "cachedResultName": "(set at runtime from input contract)"
+        },
+        "text": "={{ ':warning: AP invoice approval timeout\\n\\nInvoice ' + (($('When Called by Orchestrator').item.json.invoiceSummary && $('When Called by Orchestrator').item.json.invoiceSummary.invoiceNumber) || 'unknown') + ' (' + (($('When Called by Orchestrator').item.json.invoiceSummary && $('When Called by Orchestrator').item.json.invoiceSummary.currency) || '') + ' ' + (($('When Called by Orchestrator').item.json.invoiceSummary && $('When Called by Orchestrator').item.json.invoiceSummary.totalAmount) || '?') + ') exceeded the ' + $('When Called by Orchestrator').item.json.approvalTimeoutHours + 'h approval window.\\nReview reason: ' + ($('When Called by Orchestrator').item.json.reviewReason || 'n/a') + '\\nAudit log: ' + ($('When Called by Orchestrator').item.json.auditLogEntryId || 'n/a') + '\\n\\nPlease review and resolve manually.' }}",
+        "otherOptions": {}
+      },
+      "id": "086f3ad8-576d-4e09-9a13-d95cf5585417",
+      "name": "Slack: Escalation DM",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1552,
+        784
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "efd22e73-499b-4c7e-a0bb-b41747731529",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('When Called by Orchestrator').item.json.slackChannelApTeam }}",
+          "cachedResultName": "(set at runtime from input contract)"
+        },
+        "text": "={{ $json.decision === 'TIMEOUT' ? ('Invoice ' + (($('When Called by Orchestrator').item.json.invoiceSummary && $('When Called by Orchestrator').item.json.invoiceSummary.invoiceNumber) || 'unknown') + ' approval timed out after ' + $('When Called by Orchestrator').item.json.approvalTimeoutHours + 'h, escalated to finance manager. | audit log ' + ($json.auditLogEntryId || 'n/a')) : ('Invoice ' + (($('When Called by Orchestrator').item.json.invoiceSummary && $('When Called by Orchestrator').item.json.invoiceSummary.invoiceNumber) || 'unknown') + ' — *' + $json.decision + '*' + ($json.approverActor ? (' by ' + $json.approverActor) : '') + ' at ' + ($json.approverDecisionTime || $now.toISO()) + ' | audit log ' + ($json.auditLogEntryId || 'n/a')) }}",
+        "otherOptions": {}
+      },
+      "id": "648f6e7b-f24f-4e23-befb-350abfdf38d9",
+      "name": "Slack: Notify Decision",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1760,
+        448
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "webhookId": "0c22bbae-4aed-4090-964a-c9ce661f9bed",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## AP INVOICE APPROVAL FLOW (Workflow 03)\n\nCalled by Workflow 01 when an invoice is routed to REQUIRES_APPROVAL.\n\n**Pattern:** Slack `sendAndWait` (customForm with Decision dropdown + Notes textarea). Single node handles posting, button rendering, waiting, and timeout — n8n's canonical human-in-the-loop primitive as of v2.4.\n\n**Why not manual Block Kit + Wait?** Slack interactive buttons POST to a globally-configured app endpoint, not per-execution Wait URLs. `sendAndWait` solves this internally with per-execution unguessable URLs (token-equivalent security).\n\n**Input contract** (passed by orchestrator): auditLogEntryId, invoiceSummary, journalEntry, reviewReason, submittedBy, approvalTimeoutHours, slackChannelApTeam, slackFinanceManagerUserId.",
+        "height": 472,
+        "width": 736,
+        "color": 2
+      },
+      "id": "348d7bd4-2398-403d-99f3-7322460b285f",
+      "name": "Sticky: Workflow Purpose",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## SEND AND WAIT\n\nForm fields:\n- **Decision**: dropdown (Approve / Reject)\n- **Notes**: textarea (required — used as approverNotes or rejectionReason depending on branch)\n\nTimeout: `approvalTimeoutHours` from input. On timeout, downstream Switch's fallback fires → TIMEOUT branch.",
+        "height": 520,
+        "width": 312,
+        "color": 5
+      },
+      "id": "5e6797eb-6dc0-44fb-894b-87a14138e3aa",
+      "name": "Sticky: Send and Wait",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        768,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## DEFENSIVE EXPRESSIONS\n\nThe exact response shape from `sendAndWait` (form field paths, responder ID location) varies by n8n version. n8n expressions don't support optional chaining (`?.`), so all read expressions use the explicit-AND form: `$json.Decision || ($json.data && $json.data.Decision) || ''` and `($json.user && $json.user.id) || ($json.responder && $json.responder.id) || ...`. Verify the actual paths against a real run and tighten once known.",
+        "height": 348,
+        "width": 848,
+        "color": 3
+      },
+      "id": "7e2482ca-d6da-42ef-ba8b-c247afc472e8",
+      "name": "Sticky: Defensive Expressions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Workflow 03's Execute Workflow Trigger returns whatever the last node emits.\n// Slack: Notify Decision is upstream — its chat.postMessage response is NOT what the orchestrator needs.\n// This node re-emits the decision contract built by the branch's Build *Response node.\nfunction safeNode(name) {\n  try {\n    const ref = $(name);\n    if (!ref || typeof ref.first !== 'function') return null;\n    const first = ref.first();\n    if (!first || !first.json) return null;\n    const keys = Object.keys(first.json);\n    if (keys.length === 0) return null;\n    return first.json;\n  } catch (e) {\n    return null;\n  }\n}\n\nconst approved = safeNode('Build APPROVED Response');\nconst rejected = safeNode('Build REJECTED Response');\nconst timedOut = safeNode('Build TIMEOUT Response');\n\nconst contract = approved || rejected || timedOut;\nif (contract && contract.decision) {\n  return [{ json: contract }];\n}\n\n// Defensive: no branch's Build *Response produced data. Return a structured error\n// so the orchestrator can route this to Update Audit Log: FAILED rather than blindly post.\nlet auditLogEntryId = null;\ntry { auditLogEntryId = $('When Called by Orchestrator').first().json.auditLogEntryId || null; } catch (e) {}\nreturn [{\n  json: {\n    decision: 'UNKNOWN',\n    error: 'WF03 did not produce a decision contract — investigate the Switch: Decision branch routing',\n    auditLogEntryId\n  }\n}];\n"
+      },
+      "id": "5048a6a8-1b43-4055-bda5-b77b7049d06b",
+      "name": "Return Decision Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## DECISION BRANCHES\n\n- **Approve / Reject**: each branch resolves the Slack user ID to an email via `user.info`, then builds the response per the output contract.\n- **TIMEOUT** (Switch fallback): builds TIMEOUT response, then DMs the configured `slackFinanceManagerUserId` for escalation.\n\nAll three branches converge on `Slack: Notify Decision` for an audit ping in the AP channel.",
+        "height": 600,
+        "width": 1072,
+        "color": 4
+      },
+      "id": "725664ae-7e94-4247-8746-5c6c61d4c2c3",
+      "name": "Sticky: Branches",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Called by Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Build Approval Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Approval Summary": {
+      "main": [
+        [
+          {
+            "node": "Slack: Send and Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Send and Wait": {
+      "main": [
+        [
+          {
+            "node": "Slack: Get Approver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Get Approver": {
+      "main": [
+        [
+          {
+            "node": "Switch: Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: Decision": {
+      "main": [
+        [
+          {
+            "node": "Build APPROVED Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build REJECTED Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build TIMEOUT Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build APPROVED Response": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notify Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build REJECTED Response": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notify Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build TIMEOUT Response": {
+      "main": [
+        [
+          {
+            "node": "Slack: Escalation DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Escalation DM": {
+      "main": [
+        [
+          {
+            "node": "Slack: Notify Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Notify Decision": {
+      "main": [
+        [
+          {
+            "node": "Return Decision Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "bbeb1c9a-5122-4003-9395-184716d27a84",
+  "meta": {
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "yi2gTqN1xQVuHYFj",
+  "tags": []
+}

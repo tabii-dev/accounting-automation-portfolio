@@ -1,0 +1,21 @@
+{
+  "vendorId": "QB-V-3007",
+  "invoiceNumber": "INV-2026-0211",
+  "invoiceDate": "2026-05-04",
+  "dueDate": "2026-06-03",
+  "currency": "USD",
+  "totalAmount": 8750.0,
+  "lineItems": [
+    {
+      "description": "Q2 legal retainer",
+      "amount": 8750.0,
+      "expenseAccountCode": "6020",
+      "poNumber": "PO-2026-0044"
+    }
+  ],
+  "attachmentUrl": "https://files.example.com/invoices/INV-2026-0211.pdf",
+  "submittedBy": "ocr-bot@hargreavesfinch.co.uk",
+  "clientId": "client-hargreavesfinch",
+  "qbRealmId": "9341454076553211",
+  "entryType": "ad_hoc"
+}
