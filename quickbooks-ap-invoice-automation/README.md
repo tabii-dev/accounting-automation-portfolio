@@ -78,7 +78,7 @@ The workflow has been tested end to end across five distinct execution paths aga
 
 ### Path 1: Auto post (happy path)
 
-A $387 utility invoice from PG&E arrives via webhook. The vendor exists, the account code is in scope, the amount is under the materiality threshold, and the period is open. The orchestrator runs all checks, posts the bill to QuickBooks, writes POSTED to the audit log, and fires a Slack notification to the AP team channel. Total round trip under 90 seconds.
+A $142.85 telephone invoice from Cal Telephone arrives via webhook. The vendor exists, the account code is in scope, the amount is under the materiality threshold, and the period is open. The orchestrator runs all checks, posts the bill to QuickBooks, writes POSTED to the audit log, and fires a Slack notification to the AP team channel. Total round trip under 90 seconds.
 
 ![Slack auto post notification](./screenshots/05-slack-auto-post-notification.png)
 
@@ -92,7 +92,7 @@ A human clicks Approve. The decision routes back to the orchestrator. The bill g
 
 ### Path 3: Idempotent retry
 
-The same PG&E invoice from Path 1 is resent. The idempotency check finds the original POSTED row in the audit log and returns HTTP 200 with the original QuickBooks Bill ID. No duplicate posts to QuickBooks. The upstream system sees a successful response and knows the work was already done.
+The same Cal Telephone invoice from Path 1 is resent. The idempotency check finds the original POSTED row in the audit log and returns HTTP 200 with the original QuickBooks Bill ID. No duplicate posts to QuickBooks. The upstream system sees a successful response and knows the work was already done.
 
 ### Path 4: Authorisation failure
 
