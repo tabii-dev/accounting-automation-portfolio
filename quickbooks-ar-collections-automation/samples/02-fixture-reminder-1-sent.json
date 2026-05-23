@@ -1,0 +1,34 @@
+{
+  "_fixture": "F2 — 1 day overdue, standard tag, REMINDER_1 fires",
+  "_purpose": "Day-1 overdue invoice for a standard-tagged customer. Workflow should: pass pause check (pause_all=false), compute days_overdue=1, decide action=REMINDER_1, pass idempotency, pass rate limit, send Gmail with REMINDER_1 template, write ar_audit_log row with action_taken=REMINDER_1, sequence_step=1.",
+  "_targetNode": "Fetch Overdue Invoices",
+  "_expectedTagRow": { "contact_id": "1", "relationship_tag": "standard", "pause_all": false },
+  "_expectedAction": "REMINDER_1 (sequence_step 1)",
+  "_today": "2026-05-21",
+  "QueryResponse": {
+    "Invoice": [
+      {
+        "Id": "1037",
+        "DocNumber": "1037",
+        "TxnDate": "2026-04-20",
+        "DueDate": "2026-05-20",
+        "Balance": 239.00,
+        "TotalAmt": 239.00,
+        "CurrencyRef": { "value": "USD", "name": "United States Dollar" },
+        "CustomerRef": { "value": "1", "name": "Amy's Bird Sanctuary" },
+        "BillEmail": { "Address": "Birds@Intuit.com" },
+        "EmailStatus": "NeedToSend",
+        "PrintStatus": "NeedToPrint",
+        "Domain": "QBO",
+        "SyncToken": "0",
+        "MetaData": {
+          "CreateTime": "2026-04-20T08:00:00-07:00",
+          "LastUpdatedTime": "2026-04-20T08:00:00-07:00"
+        }
+      }
+    ],
+    "startPosition": 1,
+    "maxResults": 1
+  },
+  "time": "2026-05-21T09:00:00.000-07:00"
+}

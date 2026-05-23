@@ -1,0 +1,40 @@
+{
+  "_fixture": "WF02-F1 — payment cancels sequence",
+  "_purpose": "QBO webhook fires for Invoice 1035 (Mark Cho, tagged 'new'). The invoice has had two reminders sent — REMINDER_1 and REMINDER_2 — both ACTIVE in ar_audit_log. Mark Cho has now paid; QBO Balance is 0. WF02 should: pass IF Balance Zero, UPDATE both ar_audit_log rows to RESOLVED (resolved_at=now, resolved_reason='PAYMENT_DETECTED'), aggregate the two rows into one Slack payload, and post to #ar-payments with reminder_count=2 and contact_name='Mark Cho' (from customer_tags).",
+  "_targetNode": "Webhook: QBO Invoice Events",
+  "_preTestSetup": [
+    "1. In QBO sandbox: record a payment against Invoice 1035 so Balance becomes 0.",
+    "2. In Supabase: ensure two ACTIVE rows exist for invoice_id='1035' with action_taken IN ('REMINDER_1','REMINDER_2'). If WF01 has not produced these, INSERT them manually for the test:",
+    "   INSERT INTO ar_audit_log (workflow_run_id, invoice_id, invoice_number, contact_id, contact_email_hash, action_taken, sequence_step, status, currency_code, amount_minor_units, days_overdue, relationship_tag, notes) VALUES",
+    "     (gen_random_uuid(), '1035', '1035', '17', 'a1b2c3d4', 'REMINDER_1', 1, 'ACTIVE', 'USD', 31428, 1,  'new', '{\"source\":\"WF02-F1 fixture seed\"}'::jsonb),",
+    "     (gen_random_uuid(), '1035', '1035', '17', 'a1b2c3d4', 'REMINDER_2', 2, 'ACTIVE', 'USD', 31428, 7,  'new', '{\"source\":\"WF02-F1 fixture seed\"}'::jsonb);"
+  ],
+  "_expectedBehaviour": {
+    "node5_balanceZero": "true (Balance=0)",
+    "node6_rowsResolved": 2,
+    "node7_anyResolved": "true",
+    "node9_slackMessage": "Customer: Mark Cho, Invoice: #1035 paid $314.28, Reminders: 2, Rows resolved: 2"
+  },
+  "_today": "2026-05-22",
+  "headers": {
+    "content-type": "application/json",
+    "intuit-signature": "<deferred to v2 — not verified>"
+  },
+  "body": {
+    "eventNotifications": [
+      {
+        "realmId": "9341457036057924",
+        "dataChangeEvent": {
+          "entities": [
+            {
+              "name": "Invoice",
+              "id": "1035",
+              "operation": "Update",
+              "lastUpdated": "2026-05-22T14:23:11.000Z"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

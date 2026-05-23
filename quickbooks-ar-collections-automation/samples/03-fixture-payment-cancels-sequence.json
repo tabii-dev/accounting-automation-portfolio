@@ -1,0 +1,34 @@
+{
+  "_fixture": "F3 — sequence in progress; WF02 will cancel when payment lands",
+  "_purpose": "Day-7 overdue invoice for Mark Cho (tagged 'new', schedule mirrors 'standard'). WF01 should: compute days_overdue=7, decide action=REMINDER_2, send Gmail, write ar_audit_log row with action_taken=REMINDER_2, sequence_step=2. Then in the live test, the owner records a payment in QBO and WF02 picks up the webhook, marks all ACTIVE ar_audit_log rows for invoice 1035 as RESOLVED. This file only drives WF01; WF02 cancellation is tested separately.",
+  "_targetNode": "Fetch Overdue Invoices",
+  "_expectedTagRow": { "contact_id": "17", "relationship_tag": "new", "pause_all": false },
+  "_expectedAction": "REMINDER_2 (sequence_step 2)",
+  "_today": "2026-05-21",
+  "QueryResponse": {
+    "Invoice": [
+      {
+        "Id": "1035",
+        "DocNumber": "1035",
+        "TxnDate": "2026-04-14",
+        "DueDate": "2026-05-14",
+        "Balance": 314.28,
+        "TotalAmt": 314.28,
+        "CurrencyRef": { "value": "USD", "name": "United States Dollar" },
+        "CustomerRef": { "value": "17", "name": "Mark Cho" },
+        "BillEmail": { "Address": "Mark@Cho.com" },
+        "EmailStatus": "EmailSent",
+        "PrintStatus": "NotSet",
+        "Domain": "QBO",
+        "SyncToken": "1",
+        "MetaData": {
+          "CreateTime": "2026-04-14T10:30:00-07:00",
+          "LastUpdatedTime": "2026-05-21T10:13:24-07:00"
+        }
+      }
+    ],
+    "startPosition": 1,
+    "maxResults": 1
+  },
+  "time": "2026-05-21T09:00:00.000-07:00"
+}

@@ -1,0 +1,38 @@
+{
+  "_fixture": "WF02-F3 — webhook fired for a non-payment change; balance still > 0",
+  "_purpose": "QBO webhook fires Invoice/Update event for an invoice that still has a non-zero balance (e.g., a memo was edited, the due date was nudged, a line item was changed). WF02 should: fetch the invoice, check Balance, see Balance > 0, fall into the false branch of IF: Balance Zero, loop back to Split In Batches without touching the audit log or Slack.",
+  "_targetNode": "Webhook: QBO Invoice Events",
+  "_preTestSetup": [
+    "1. In QBO sandbox: pick an unpaid invoice (Balance > 0). Bill's Windsurf Shop Invoice 1027 ($85, 59-ish days overdue at time of fixture authoring) works.",
+    "2. Trigger any non-payment edit on that invoice — e.g., update the memo or change the due date. QBO will deliver an Invoice/Update webhook with the same id.",
+    "3. No Supabase setup required — the workflow must skip BEFORE touching ar_audit_log."
+  ],
+  "_expectedBehaviour": {
+    "node5_balanceZero": "false (Balance=85.00)",
+    "node6_rowsResolved": "<not executed — short-circuited at Node 5>",
+    "node7_anyResolved": "<not executed>",
+    "node9_slackMessage": "<not fired>"
+  },
+  "_today": "2026-05-22",
+  "headers": {
+    "content-type": "application/json",
+    "intuit-signature": "<deferred to v2 — not verified>"
+  },
+  "body": {
+    "eventNotifications": [
+      {
+        "realmId": "9341457036057924",
+        "dataChangeEvent": {
+          "entities": [
+            {
+              "name": "Invoice",
+              "id": "1027",
+              "operation": "Update",
+              "lastUpdated": "2026-05-22T16:14:05.000Z"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

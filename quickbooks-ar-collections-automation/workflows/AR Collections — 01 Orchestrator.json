@@ -1,0 +1,849 @@
+{
+  "name": "AR Collections — 01 Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "b30687ef-93aa-44ba-9410-245f46b2ebcc",
+      "name": "Cron: Daily 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -784,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "today-iso",
+              "name": "today_iso",
+              "value": "={{ $now.toUTC().toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            },
+            {
+              "id": "1a54f14b-5c0e-4688-be77-1cc431664408",
+              "name": "workflow_run_id",
+              "value": "={{ 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) { var r = Math.random() * 16 | 0; return (c == 'x' ? r : (r & 0x3 | 0x8)).toString(16); }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ab111655-a983-4294-ab03-33488071f5a3",
+      "name": "Set Today",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -576,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/query?query=SELECT%20*%20FROM%20Invoice%20WHERE%20Balance%20%3E%20%270%27%20AND%20DueDate%20%3C%20%27{{ $('Set Today').item.json.today_iso }}%27&minorversion=70",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "08637cbc-8d21-489f-a8f1-46365fa4ccd9",
+      "name": "Fetch Overdue Invoices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -384,
+        272
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "3qEvTuVyuhWNGiXU",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fan out QBO Query API response into one item per overdue invoice.\n// Empty result (no overdue invoices today) is normal — returns [] cleanly.\ntry {\n  const resp = $input.first().json;\n  const invoices = resp?.QueryResponse?.Invoice ?? [];\n  if (!Array.isArray(invoices)) {\n    throw new Error('QueryResponse.Invoice is present but not an array');\n  }\n  return invoices.map(inv => ({ json: inv }));\n} catch (err) {\n  throw new Error('Extract invoices failed: ' + err.message);\n}"
+      },
+      "id": "68d1b397-6fa7-4077-aae9-8a613897ed4e",
+      "name": "Extract Invoices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "2e351924-80ab-4bc1-a785-b510548f2573",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        32,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/customer/{{ $json.CustomerRef.value }}?minorversion=70",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c7b5efed-e08e-4d08-bab3-b78d11958726",
+      "name": "Fetch Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        192
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "3qEvTuVyuhWNGiXU",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT contact_name, relationship_tag, pause_all FROM customer_tags WHERE contact_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ $json.Customer.Id }}"
+        }
+      },
+      "id": "d951b3d7-71b2-41b0-bae2-aebf80d4b567",
+      "name": "Lookup Tag State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        432,
+        192
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge QBO customer payload + Supabase tag state into a single working object.\n// Untagged customers (no row in customer_tags) default to relationship_tag='standard'.\n// contact_email_hash is an 8-char deterministic prefix used by the audit log; raw email\n// is kept on the object for the Gmail send only but is NEVER persisted to Supabase.\nfunction hash8(str) {\n  if (!str) return null;\n  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;\n  for (let i = 0, ch; i < str.length; i++) {\n    ch = str.charCodeAt(i);\n    h1 = Math.imul(h1 ^ ch, 2654435761);\n    h2 = Math.imul(h2 ^ ch, 1597334677);\n  }\n  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);\n  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);\n  const v = 4294967296 * (2097151 & h2) + (h1 >>> 0);\n  return v.toString(16).padStart(14, '0').slice(0, 8);\n}\n\ntry {\n  const customer = $('Fetch Customer').first().json.Customer;\n  if (!customer || !customer.Id) {\n    throw new Error('QBO Customer payload missing Id');\n  }\n  const tagRow = $input.first().json;\n  const invoice = $('Split In Batches').first().json;\n  const hasTagRow = tagRow && tagRow.relationship_tag !== undefined;\n  const email = customer.PrimaryEmailAddr?.Address ?? null;\n\n  return [{\n    json: {\n      invoice: invoice,\n      customer_id: String(customer.Id),\n      customer_name: customer.DisplayName ?? tagRow?.contact_name ?? 'unknown',\n      customer_email: email,\n      contact_email_hash: email ? hash8(email.toLowerCase().trim()) : null,\n      relationship_tag: hasTagRow ? tagRow.relationship_tag : 'standard',\n      pause_all: hasTagRow ? (tagRow.pause_all === true) : false\n    }\n  }];\n} catch (err) {\n  throw new Error('Apply defaults failed: ' + err.message);\n}"
+      },
+      "id": "ca0acaa5-c4a1-4fce-a786-6d3c22e4c2c3",
+      "name": "Apply Defaults",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "pause-cond",
+              "leftValue": "={{ $json.pause_all }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9b6fe48e-36f5-4718-9336-5f716d8efb4f",
+      "name": "IF: Paused?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute days_overdue and decide action based on (days_overdue, relationship_tag).\n// today_iso comes from the Set Today node (single source of truth for the run).\n// action_taken in {NONE, REMINDER_1..4, ESCALATED}; sequence_step in {1..4, null}.\ntry {\n  const todayIso = $('Set Today').first().json.today_iso;\n  if (!todayIso || !/^\\d{4}-\\d{2}-\\d{2}$/.test(todayIso)) {\n    throw new Error('Invalid today_iso from Set Today: ' + todayIso);\n  }\n  const item = $input.first().json;\n  const dueDate = item.invoice?.DueDate;\n  if (!dueDate) {\n    throw new Error('Invoice missing DueDate');\n  }\n  const todayMs = Date.UTC(\n    parseInt(todayIso.slice(0, 4), 10),\n    parseInt(todayIso.slice(5, 7), 10) - 1,\n    parseInt(todayIso.slice(8, 10), 10)\n  );\n  const dueMs = Date.UTC(\n    parseInt(dueDate.slice(0, 4), 10),\n    parseInt(dueDate.slice(5, 7), 10) - 1,\n    parseInt(dueDate.slice(8, 10), 10)\n  );\n  const daysOverdue = Math.floor((todayMs - dueMs) / 86400000);\n\n  const tag = item.relationship_tag || 'standard';\n  let action = 'NONE';\n  let step = null;\n\n  if (tag === 'standard' || tag === 'new') {\n    if (daysOverdue === 1)       { action = 'REMINDER_1'; step = 1; }\n    else if (daysOverdue === 7)  { action = 'REMINDER_2'; step = 2; }\n    else if (daysOverdue === 21) { action = 'REMINDER_3'; step = 3; }\n    else if (daysOverdue === 45) { action = 'REMINDER_4'; step = 4; }\n    else if (daysOverdue >= 60)  { action = 'ESCALATED';  step = null; }\n  } else if (tag === 'long-term-trusted') {\n    if (daysOverdue === 14)      { action = 'REMINDER_1'; step = 1; }\n    else if (daysOverdue === 35) { action = 'REMINDER_2'; step = 2; }\n    else if (daysOverdue >= 60)  { action = 'ESCALATED';  step = null; }\n  }\n\n  return [{ json: { ...item, days_overdue: daysOverdue, action_taken: action, sequence_step: step } }];\n} catch (err) {\n  throw new Error('Compute action failed: ' + err.message);\n}"
+      },
+      "id": "f8d47fa7-905d-45d3-83ef-711e0a0873a3",
+      "name": "Compute Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "action-none",
+              "leftValue": "={{ $json.action_taken }}",
+              "rightValue": "NONE",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f4d81ade-0cbb-4d13-865a-53f6a92edac1",
+      "name": "IF: Action Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1232,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 AS already_sent FROM ar_audit_log WHERE invoice_id = $1 AND sequence_step IS NOT DISTINCT FROM $2 AND (created_at AT TIME ZONE 'UTC')::date = (now() AT TIME ZONE 'UTC')::date LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.invoice.Id, $json.sequence_step] }}"
+        }
+      },
+      "id": "7f06ca08-e9ff-429f-8ef3-e2b468090630",
+      "name": "Idempotency Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1424,
+        272
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "idem-not-sent",
+              "leftValue": "={{ $json.already_sent }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ff6a1066-385f-4d4e-b3ed-aad4b55d73ec",
+      "name": "IF: Not Yet Sent Today?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1632,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*)::int AS recent_count FROM ar_audit_log WHERE contact_id = $1 AND action_taken LIKE 'REMINDER_%' AND created_at > now() - INTERVAL '7 days';",
+        "options": {
+          "queryReplacement": "={{ $('Apply Defaults').first().json.customer_id }}"
+        }
+      },
+      "id": "535c6713-8965-4653-87ba-338bf6becaf3",
+      "name": "Rate Limit Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1824,
+        272
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "rate-ok",
+              "leftValue": "={{ $json.recent_count }}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cd042033-ffdd-417f-bc8f-51ad606a4507",
+      "name": "IF: Rate-Limit OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2032,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "route-escalate",
+              "leftValue": "={{ $('Compute Action').first().json.action_taken }}",
+              "rightValue": "ESCALATED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e4af8af5-e9eb-439e-a90b-74bee8f540d0",
+      "name": "IF: Escalate vs Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2224,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the email subject + body for the reminder. Templates are inline as a static\n// map keyed by action_taken. v2 path: lift TEMPLATES into a Set node or a Supabase\n// templates table so a non-technical user can edit copy without opening a Code node.\ntry {\n  const ctx = $('Compute Action').first().json;\n  const owner = 'Tabitha';\n  const action = ctx.action_taken;\n  const balance = ctx.invoice?.Balance ?? 0;\n  const balanceFormatted = '$' + Number(balance).toFixed(2);\n  const invoiceNumber = ctx.invoice?.DocNumber ?? ctx.invoice?.Id;\n  const days = ctx.days_overdue;\n  const name = ctx.customer_name;\n\n  const TEMPLATES = {\n    REMINDER_1: {\n      subject: 'Quick note about invoice ' + invoiceNumber,\n      body:\n        'Hi ' + name + ',\\n\\n' +\n        'Just a quick note in case this was missed: your balance of ' + balanceFormatted +\n        ' on invoice #' + invoiceNumber + ' is now ' + days + ' day(s) past due.\\n\\n' +\n        'If payment has already been sent, please ignore this message. Otherwise, please ' +\n        'let me know if there is anything I can help with.\\n\\n' +\n        'Thanks,\\n' + owner\n    },\n    REMINDER_2: {\n      subject: 'Following up on invoice ' + invoiceNumber,\n      body:\n        'Hi ' + name + ',\\n\\n' +\n        'Following up on invoice #' + invoiceNumber + '. The balance of ' + balanceFormatted +\n        ' is now ' + days + ' days past due. Could you confirm when payment is on its way?\\n\\n' +\n        'Happy to help if anything is holding things up on your end.\\n\\n' +\n        'Thanks,\\n' + owner\n    },\n    REMINDER_3: {\n      subject: 'Invoice ' + invoiceNumber + ' is significantly past due',\n      body:\n        'Hi ' + name + ',\\n\\n' +\n        'Invoice #' + invoiceNumber + ' for ' + balanceFormatted + ' is now ' + days +\n        ' days past due. Please could you confirm payment timing, or get in touch if ' +\n        'there is an issue with the invoice itself.\\n\\n' +\n        'Thanks,\\n' + owner\n    },\n    REMINDER_4: {\n      subject: 'Invoice ' + invoiceNumber + ' — final reminder before escalation',\n      body:\n        'Hi ' + name + ',\\n\\n' +\n        'This is a final reminder on invoice #' + invoiceNumber + ' for ' + balanceFormatted +\n        ', now ' + days + ' days past due. If we do not hear back from you within the next ' +\n        'few days, we will need to discuss this directly.\\n\\n' +\n        'Please let me know how you would like to proceed.\\n\\n' +\n        'Thanks,\\n' + owner\n    }\n  };\n\n  const tpl = TEMPLATES[action];\n  if (!tpl) {\n    throw new Error('No template defined for action: ' + action);\n  }\n\n  return [{ json: { ...ctx, email_subject: tpl.subject, email_body: tpl.body } }];\n} catch (err) {\n  throw new Error('Build email template failed: ' + err.message);\n}"
+      },
+      "id": "c1597641-6459-4362-9832-6224853bff7e",
+      "name": "Build Email Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2432,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "text",
+        "message": "={{ $json.email_body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c69501f1-723c-46eb-93e5-56111e9c43a2",
+      "name": "Gmail: Send Reminder",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2624,
+        352
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "5c5615a2-8b3e-4631-9e77-eea750538f21",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "HKHAhSUJKuPDpGkf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#ar-collections",
+          "cachedResultName": "ar-collections"
+        },
+        "text": "=:rotating_light: AR escalation\nCustomer: {{ $('Compute Action').first().json.customer_name }} (tag: {{ $('Compute Action').first().json.relationship_tag }})\nInvoice: {{ $('Compute Action').first().json.invoice.DocNumber || $('Compute Action').first().json.invoice.Id }}\nBalance: ${{ $('Compute Action').first().json.invoice.Balance }} {{ $('Compute Action').first().json.invoice.CurrencyRef && $('Compute Action').first().json.invoice.CurrencyRef.value }}\nDays overdue: {{ $('Compute Action').first().json.days_overdue }}\nContact email hash: {{ $('Compute Action').first().json.contact_email_hash }}\nDecide how to proceed — no automated email was sent.",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "b40242e3-f85a-4ef4-9e40-aaec7b7bd5eb",
+      "name": "Slack: Escalation",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        2432,
+        192
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "5f3ec0a6-cb3d-4425-8cbc-f39f0e5e9f8f",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "f2cd87ed-7069-4438-b77c-8f8086412836",
+      "name": "Merge Send Paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2832,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ar_audit_log (workflow_run_id, invoice_id, invoice_number, contact_id, contact_email_hash, action_taken, sequence_step, status, currency_code, amount_minor_units, days_overdue, relationship_tag, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE', $8, $9, $10, $11, $12) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Set Today').first().json.workflow_run_id, $('Compute Action').first().json.invoice.Id, ($('Compute Action').first().json.invoice.DocNumber || $('Compute Action').first().json.invoice.Id), $('Compute Action').first().json.customer_id, $('Compute Action').first().json.contact_email_hash, $('Compute Action').first().json.action_taken, $('Compute Action').first().json.sequence_step, ($('Compute Action').first().json.invoice.CurrencyRef && $('Compute Action').first().json.invoice.CurrencyRef.value) || 'USD', Math.round(parseFloat($('Compute Action').first().json.invoice.Balance) * 100), $('Compute Action').first().json.days_overdue, $('Compute Action').first().json.relationship_tag, JSON.stringify({summary: 'WF01 ' + $('Compute Action').first().json.action_taken + ' for invoice ' + ($('Compute Action').first().json.invoice.DocNumber || $('Compute Action').first().json.invoice.Id)})] }}"
+        }
+      },
+      "id": "2f59f7cc-202b-4cdc-abe1-84d6f4be5b07",
+      "name": "Write Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3024,
+        272
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## WF01 — AR Collections Orchestrator\nDaily cron. Scans QBO for overdue invoices, decides reminder/escalate/skip per invoice, sends inline. 21 nodes.\n\n**Storage:**\n- QBO: source of truth for invoices, customers\n- Supabase `customer_tags`: relationship_tag + pause_all\n- Supabase `ar_audit_log`: every action, append-only\n\n**Compliance:** Idempotency (Node 12-13), Rate limit (Node 14-15), PII hash (Node 8), Append-only audit (Node 21).",
+        "height": 480,
+        "width": 800,
+        "color": 4
+      },
+      "id": "c7f50d41-c100-45ad-891b-513f0e3a42b8",
+      "name": "Sticky: Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -800,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Loop mechanics\n`Split In Batches` (size 1) iterates one invoice at a time.\n- `main[0]` (done) terminates the workflow\n- `main[1]` (each) feeds the per-invoice chain\n\nEvery early-exit branch (paused, no action, already sent, rate-limited) loops back to `Split In Batches` so the next iteration fires. Write Audit Log also loops back on success.",
+        "height": 508,
+        "width": 3248,
+        "color": 5
+      },
+      "id": "b4a50b50-7fb2-4eb1-a130-be44d5980c67",
+      "name": "Sticky: Loop Mechanics",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        16,
+        -16
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cron: Daily 09:00": {
+      "main": [
+        [
+          {
+            "node": "Set Today",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Today": {
+      "main": [
+        [
+          {
+            "node": "Fetch Overdue Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Overdue Invoices": {
+      "main": [
+        [
+          {
+            "node": "Extract Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Invoices": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Fetch Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Customer": {
+      "main": [
+        [
+          {
+            "node": "Lookup Tag State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Tag State": {
+      "main": [
+        [
+          {
+            "node": "Apply Defaults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Defaults": {
+      "main": [
+        [
+          {
+            "node": "IF: Paused?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Paused?": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compute Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Action": {
+      "main": [
+        [
+          {
+            "node": "IF: Action Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Action Required?": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency Check": {
+      "main": [
+        [
+          {
+            "node": "IF: Not Yet Sent Today?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Not Yet Sent Today?": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit Check": {
+      "main": [
+        [
+          {
+            "node": "IF: Rate-Limit OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Rate-Limit OK?": {
+      "main": [
+        [
+          {
+            "node": "IF: Escalate vs Email?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Escalate vs Email?": {
+      "main": [
+        [
+          {
+            "node": "Slack: Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Email Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Template": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Send Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Send Reminder": {
+      "main": [
+        [
+          {
+            "node": "Merge Send Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Escalation": {
+      "main": [
+        [
+          {
+            "node": "Merge Send Paths",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Send Paths": {
+      "main": [
+        [
+          {
+            "node": "Write Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Audit Log": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "db16ffa2-06fe-4e1c-ae1f-03cdda772c12",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "hUtIkf7GuFa8L1Yw",
+  "tags": []
+}

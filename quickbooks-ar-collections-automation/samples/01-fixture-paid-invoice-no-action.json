@@ -1,0 +1,17 @@
+{
+  "_fixture": "F1 — paid invoice, no action",
+  "_purpose": "The workflow's QBO query filters Balance > '0', so paid invoices like Cool Cars INV 1004 never appear in the overdue list. This fixture is an empty query response — exercises the empty-array path. Workflow should iterate zero times through Split In Batches and exit cleanly.",
+  "_targetNode": "Fetch Overdue Invoices",
+  "_realQboInvoice": {
+    "DocNumber": "1004",
+    "Customer": "Cool Cars (Id 3)",
+    "Status": "Paid",
+    "Balance": 0,
+    "Note": "Excluded from query by Balance > '0'"
+  },
+  "QueryResponse": {
+    "startPosition": 1,
+    "maxResults": 0
+  },
+  "time": "2026-05-21T09:00:00.000-07:00"
+}

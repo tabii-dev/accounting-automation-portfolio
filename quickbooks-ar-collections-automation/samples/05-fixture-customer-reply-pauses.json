@@ -1,0 +1,35 @@
+{
+  "_fixture": "F5 — paused sequence, reminder is skipped",
+  "_purpose": "Day-25 overdue invoice for Geeta Kalapatapu, who has replied to a prior reminder. The owner has manually set customer_tags.pause_all=true for contact_id=10. WF01 should: fetch the customer, look up tag state, hit Node 9 (IF: Paused?), and skip this iteration via the loop-back without sending anything or writing an audit row.",
+  "_targetNode": "Fetch Overdue Invoices",
+  "_preTestSetup": "Before running this fixture, execute in Supabase: UPDATE customer_tags SET pause_all=true, pause_reason='Customer replied 2026-05-19, owner reviewing', paused_at=now() WHERE contact_id='10';",
+  "_expectedTagRow": { "contact_id": "10", "relationship_tag": "standard", "pause_all": true },
+  "_expectedAction": "SKIPPED via pause (no audit log row written)",
+  "_today": "2026-05-21",
+  "QueryResponse": {
+    "Invoice": [
+      {
+        "Id": "1019",
+        "DocNumber": "1019",
+        "TxnDate": "2026-03-26",
+        "DueDate": "2026-04-26",
+        "Balance": 629.10,
+        "TotalAmt": 629.10,
+        "CurrencyRef": { "value": "USD", "name": "United States Dollar" },
+        "CustomerRef": { "value": "10", "name": "Geeta Kalapatapu" },
+        "BillEmail": { "Address": "Geeta@Kalapatapu.com" },
+        "EmailStatus": "EmailSent",
+        "PrintStatus": "NotSet",
+        "Domain": "QBO",
+        "SyncToken": "1",
+        "MetaData": {
+          "CreateTime": "2026-03-26T11:00:00-07:00",
+          "LastUpdatedTime": "2026-05-21T10:14:26-07:00"
+        }
+      }
+    ],
+    "startPosition": 1,
+    "maxResults": 1
+  },
+  "time": "2026-05-21T09:00:00.000-07:00"
+}

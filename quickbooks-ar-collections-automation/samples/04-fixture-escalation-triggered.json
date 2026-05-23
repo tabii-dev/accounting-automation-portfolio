@@ -1,0 +1,34 @@
+{
+  "_fixture": "F4 — 60 days overdue, long-term-trusted, escalate to Slack",
+  "_purpose": "Day-60 overdue invoice for Bill's Windsurf Shop (tagged 'long-term-trusted'). Trusted customers go straight to owner escalation at day 60 with no automated email. WF01 should: compute days_overdue=60, decide action=ESCALATED, route through the Slack branch (NOT the Gmail branch), post to #ar-collections with full invoice context, write ar_audit_log row with action_taken=ESCALATED, sequence_step=NULL.",
+  "_targetNode": "Fetch Overdue Invoices",
+  "_expectedTagRow": { "contact_id": "2", "relationship_tag": "long-term-trusted", "pause_all": false },
+  "_expectedAction": "ESCALATED (sequence_step NULL)",
+  "_today": "2026-05-21",
+  "QueryResponse": {
+    "Invoice": [
+      {
+        "Id": "1027",
+        "DocNumber": "1027",
+        "TxnDate": "2026-02-22",
+        "DueDate": "2026-03-22",
+        "Balance": 85.00,
+        "TotalAmt": 85.00,
+        "CurrencyRef": { "value": "USD", "name": "United States Dollar" },
+        "CustomerRef": { "value": "2", "name": "Bill's Windsurf Shop" },
+        "BillEmail": { "Address": "Surf@Intuit.com" },
+        "EmailStatus": "EmailSent",
+        "PrintStatus": "NotSet",
+        "Domain": "QBO",
+        "SyncToken": "2",
+        "MetaData": {
+          "CreateTime": "2026-02-22T09:00:00-07:00",
+          "LastUpdatedTime": "2026-05-21T10:12:42-07:00"
+        }
+      }
+    ],
+    "startPosition": 1,
+    "maxResults": 1
+  },
+  "time": "2026-05-21T09:00:00.000-07:00"
+}

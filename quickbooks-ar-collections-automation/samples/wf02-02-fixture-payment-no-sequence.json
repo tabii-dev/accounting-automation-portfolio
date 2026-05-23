@@ -1,0 +1,39 @@
+{
+  "_fixture": "WF02-F2 — payment lands but no dunning sequence existed; silent skip",
+  "_purpose": "QBO webhook fires for an invoice that was paid but never had a dunning sequence run against it (paid before any reminder fired). WF02 should: pass IF Balance Zero, hit the UPDATE which finds zero ACTIVE rows, Aggregate emits rows_resolved=0, IF: Any Rows Resolved fires false, iteration loops back to Split In Batches with no Slack noise.",
+  "_targetNode": "Webhook: QBO Invoice Events",
+  "_preTestSetup": [
+    "1. In QBO sandbox: pick a paid invoice that has never appeared in ar_audit_log. Cool Cars Invoice 1004 ($0 balance, no dunning history) is the canonical candidate — confirm by querying:",
+    "   SELECT COUNT(*) FROM ar_audit_log WHERE invoice_id='1004';",
+    "   Should return 0. If not 0, pick a different invoice or DELETE the rows (only possible if the append-only trigger lets you — it does not in production, so use a different invoice).",
+    "2. No Supabase setup required for this fixture — the absence of rows IS the test condition."
+  ],
+  "_expectedBehaviour": {
+    "node5_balanceZero": "true (Balance=0)",
+    "node6_rowsResolved": 0,
+    "node7_anyResolved": "false",
+    "node9_slackMessage": "<not fired — silent skip per Q4 decision>"
+  },
+  "_today": "2026-05-22",
+  "headers": {
+    "content-type": "application/json",
+    "intuit-signature": "<deferred to v2 — not verified>"
+  },
+  "body": {
+    "eventNotifications": [
+      {
+        "realmId": "9341457036057924",
+        "dataChangeEvent": {
+          "entities": [
+            {
+              "name": "Invoice",
+              "id": "1004",
+              "operation": "Update",
+              "lastUpdated": "2026-05-22T15:02:48.000Z"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

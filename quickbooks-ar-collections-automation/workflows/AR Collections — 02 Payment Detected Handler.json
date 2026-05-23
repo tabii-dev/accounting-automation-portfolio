@@ -1,0 +1,434 @@
+{
+  "name": "AR Collections — 02 Payment Detected Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "qbo-evt-9341457036057924",
+        "options": {}
+      },
+      "id": "d8a24a22-f2cb-4819-b864-fc6f71b50a50",
+      "name": "Webhook: QBO Invoice Events",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        32,
+        240
+      ],
+      "webhookId": "qbo-evt-9341457036057924"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract Invoice/Update events from QBO webhook payload. Filters to invoice updates\n// only; other entities and operations are ignored. Empty result is normal (webhook fired\n// for a non-invoice change) — Split In Batches' done output handles that path cleanly.\ntry {\n  const body = $input.first().json.body ?? $input.first().json;\n  const notifications = body?.eventNotifications ?? [];\n  if (!Array.isArray(notifications)) {\n    throw new Error('eventNotifications is not an array');\n  }\n  const out = [];\n  for (const n of notifications) {\n    const entities = n?.dataChangeEvent?.entities ?? [];\n    for (const e of entities) {\n      if (e?.name === 'Invoice' && e?.operation === 'Update') {\n        out.push({\n          json: {\n            id: String(e.id),\n            realmId: String(n.realmId ?? ''),\n            lastUpdated: e.lastUpdated ?? null\n          }\n        });\n      }\n    }\n  }\n  return out;\n} catch (err) {\n  throw new Error('Extract invoice updates failed: ' + err.message);\n}"
+      },
+      "id": "e9fa5d4b-e73a-4c4c-9112-a39cacaf3a05",
+      "name": "Extract Invoice Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "14b50885-b508-477f-b8b8-3b38b6ed3495",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        560,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/invoice/{{ $json.id }}?minorversion=70",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ad66a523-7940-486e-b7a1-fda17d0bfe2e",
+      "name": "Fetch Invoice from QBO",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        768,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "3qEvTuVyuhWNGiXU",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "balance-zero",
+              "leftValue": "={{ parseFloat($json.Invoice.Balance) }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "23e25913-46fe-48a3-8326-c1e9d7ce2403",
+      "name": "IF: Balance Zero?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        960,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ar_audit_log SET status = 'RESOLVED', resolved_at = now(), resolved_reason = 'PAYMENT_DETECTED' WHERE invoice_id = $1 AND status = 'ACTIVE' RETURNING id, invoice_number, contact_id, action_taken, sequence_step, currency_code, amount_minor_units, days_overdue, (SELECT contact_name FROM customer_tags WHERE contact_id = ar_audit_log.contact_id) AS contact_name;",
+        "options": {
+          "queryReplacement": "={{ $json.Invoice.Id }}"
+        }
+      },
+      "id": "52d8ef00-d786-40cc-97d1-52b146458ad4",
+      "name": "Find & Mark Resolved",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1168,
+        320
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fold N rows from UPDATE...RETURNING into one item with the Slack message pre-built.\n// When 0 rows were resolved (no ACTIVE sequence existed), emit rows_resolved=0 so the\n// downstream IF can short-circuit silently per the spec.\n// contact_name may be NULL (untagged customer) — fall back to 'customer ' + contact_id.\ntry {\n  const items = $input.all() ?? [];\n  const real = items.filter(it => it?.json && it.json.id !== undefined && it.json.id !== null);\n\n  if (real.length === 0) {\n    return [{ json: { rows_resolved: 0 } }];\n  }\n\n  const first = real[0].json;\n  const invoiceJson = $('Fetch Invoice from QBO').first().json.Invoice;\n  const reminderCount = real.filter(r => String(r.json.action_taken || '').startsWith('REMINDER_')).length;\n  const escalated = real.some(r => r.json.action_taken === 'ESCALATED');\n  const contactName = first.contact_name || ('customer ' + first.contact_id);\n  const currency = first.currency_code || (invoiceJson?.CurrencyRef && invoiceJson.CurrencyRef.value) || 'USD';\n  const invoiceNumber = first.invoice_number || invoiceJson?.DocNumber || invoiceJson?.Id;\n  const invoicePaidAmt = '$' + Number(invoiceJson?.TotalAmt ?? 0).toFixed(2);\n\n  const lines = [];\n  lines.push(':white_check_mark: Payment received — dunning cancelled');\n  lines.push('Customer: ' + contactName);\n  lines.push('Invoice: #' + invoiceNumber + ' (paid ' + invoicePaidAmt + ' ' + currency + ')');\n  if (reminderCount > 0) lines.push('Reminders sent before payment: ' + reminderCount);\n  if (escalated) lines.push('Sequence had escalated to owner.');\n  lines.push('Audit rows resolved: ' + real.length);\n\n  return [{\n    json: {\n      rows_resolved: real.length,\n      invoice_id: String(invoiceJson?.Id),\n      invoice_number: invoiceNumber,\n      contact_id: first.contact_id,\n      contact_name: contactName,\n      reminder_count: reminderCount,\n      escalated: escalated,\n      slack_text: lines.join('\\n')\n    }\n  }];\n} catch (err) {\n  throw new Error('Aggregate resolved rows failed: ' + err.message);\n}"
+      },
+      "id": "d1e817e5-4b87-420c-a625-c66f3824fba6",
+      "name": "Aggregate Resolved Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "any-resolved",
+              "leftValue": "={{ $json.rows_resolved }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a8909e2d-36ce-4918-a14e-6399ac0957f1",
+      "name": "IF: Any Rows Resolved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#ar-payments",
+          "cachedResultName": "ar-payments"
+        },
+        "text": "={{ $json.slack_text }}",
+        "otherOptions": {}
+      },
+      "id": "96b2b664-b611-4b34-9aa1-e768fdd38101",
+      "name": "Slack: Payment Notified",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1760,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "db0ec63e-9410-4dd0-ab54-76e2b555e635",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## WF02 — Payment Detected Handler\nQBO Invoice/Update webhook → verify Balance=0 → mark ACTIVE dunning sequences RESOLVED → notify Slack. 9 functional nodes.\n\n**Webhook responds 200 immediately** (responseMode: onReceived) so QBO does not time out and re-deliver,  re-delivery would silently no-op anyway because the second UPDATE has zero ACTIVE rows to match, but we still avoid the latency hit.\n\n",
+        "height": 344,
+        "width": 528,
+        "color": 4
+      },
+      "id": "d2deb8a3-2de5-4d4f-9c75-6e354c81d36a",
+      "name": "Sticky: Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Loop mechanics + SQL note\nSplit In Batches (size 1) iterates one invoice entity at a time. main[1] feeds the per-entity chain; main[0] (done) ends the workflow.\n\n**Skip paths loop back to Split In Batches:**\n- Balance != 0 (webhook fired for a non-payment change)\n- rows_resolved == 0 (no ACTIVE sequence existed)\nSlack success path also loops back, so multi-entity webhook deliveries process every entity.\n",
+        "height": 552,
+        "width": 1360,
+        "color": 5
+      },
+      "id": "4c8c899b-8396-49f2-bd14-3b5d5fb6ba33",
+      "name": "Sticky: Loop Mechanics",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        544,
+        0
+      ]
+    }
+  ],
+  "pinData": {
+    "Webhook: QBO Invoice Events": [
+      {
+        "json": {
+          "_fixture": "WF02-F1 — payment cancels sequence",
+          "_purpose": "QBO webhook fires for Invoice 1038 (DocNumber 1038, internal Id 148, customer 'Kookies by Kathy', contact_id 16, tagged 'standard'). The invoice has had two reminders sent — REMINDER_1 and REMINDER_2 — both ACTIVE in ar_audit_log. Kookies has now paid; QBO Balance is 0. WF02 should: pass IF Balance Zero, UPDATE both ar_audit_log rows to RESOLVED (resolved_at=now, resolved_reason='PAYMENT_DETECTED'), aggregate the two rows into one Slack payload, and post to #ar-payments with reminder_count=2 and contact_name='Kookies by Kathy' (from customer_tags).",
+          "_targetNode": "Webhook: QBO Invoice Events",
+          "_preTestSetup": [
+            "1. In QBO sandbox: record a payment against Invoice 1038 so Balance becomes 0.",
+            "2. In Supabase: ensure two ACTIVE rows exist for invoice_id='148' (the internal Id, not the DocNumber). WF01 already wrote REMINDER_1 for invoice_id='148' from an earlier live run. Add a second REMINDER_2 row so the UPDATE has two rows to resolve. Run this seed SQL:",
+            "   INSERT INTO ar_audit_log (workflow_run_id, invoice_id, invoice_number, contact_id, contact_email_hash, action_taken, sequence_step, status, currency_code, amount_minor_units, days_overdue, relationship_tag, notes) VALUES",
+            "     (gen_random_uuid(), '148', '1038', '16', 'a1b2c3d4', 'REMINDER_2', 2, 'ACTIVE', 'USD', 7500, 7, 'standard', '{\"source\":\"WF02-F1 fixture seed\"}'::jsonb);",
+            "3. Verify: SELECT invoice_id, invoice_number, action_taken, status FROM ar_audit_log WHERE invoice_id = '148'; should return two rows (REMINDER_1 from earlier WF01 run, REMINDER_2 from this seed), both with status='ACTIVE'."
+          ],
+          "_expectedBehaviour": {
+            "node1_webhook": "Receives POST, responds 200 immediately (onReceived)",
+            "node2_extractUpdates": "Returns [{ id: '148', realmId: '9341457036057924', lastUpdated: '...' }]",
+            "node3_splitInBatches": "Iterates the single entity",
+            "node4_fetchInvoice": "GET /invoice/148, returns Invoice with Balance=0",
+            "node5_balanceZero": "true (Balance=0) → continue to Find & Mark Resolved",
+            "node6_findMarkResolved": "UPDATE returns 2 rows: invoice_number='1038', contact_id='16', contact_name='Kookies by Kathy', action_taken IN ('REMINDER_1','REMINDER_2'), currency_code='USD', amount_minor_units=7500",
+            "node7_aggregate": "rows_resolved=2, reminder_count=2, escalated=false, contact_name='Kookies by Kathy', slack_text built with all details",
+            "node8_anyResolved": "true (rows_resolved > 0) → continue to Slack",
+            "node9_slack": "Posts to #ar-payments: ':white_check_mark: Payment received — dunning cancelled / Customer: Kookies by Kathy / Invoice: #1038 (paid $75.00 USD) / Reminders sent before payment: 2 / Audit rows resolved: 2'"
+          },
+          "_postTestVerification": [
+            "SELECT id, action_taken, status, resolved_at, resolved_reason FROM ar_audit_log WHERE invoice_id = '148' ORDER BY created_at DESC; should return two rows, both with status='RESOLVED', resolved_at populated, resolved_reason='PAYMENT_DETECTED'."
+          ],
+          "_today": "2026-05-22",
+          "headers": {
+            "content-type": "application/json",
+            "intuit-signature": "<deferred to v2 — not verified>"
+          },
+          "body": {
+            "eventNotifications": [
+              {
+                "realmId": "9341457036057924",
+                "dataChangeEvent": {
+                  "entities": [
+                    {
+                      "name": "Invoice",
+                      "id": "148",
+                      "operation": "Update",
+                      "lastUpdated": "2026-05-22T14:23:11.000Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook: QBO Invoice Events": {
+      "main": [
+        [
+          {
+            "node": "Extract Invoice Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Invoice Updates": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Fetch Invoice from QBO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Invoice from QBO": {
+      "main": [
+        [
+          {
+            "node": "IF: Balance Zero?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Balance Zero?": {
+      "main": [
+        [
+          {
+            "node": "Find & Mark Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find & Mark Resolved": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Resolved Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Resolved Rows": {
+      "main": [
+        [
+          {
+            "node": "IF: Any Rows Resolved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Any Rows Resolved?": {
+      "main": [
+        [
+          {
+            "node": "Slack: Payment Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Payment Notified": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "bbb91c06-09c7-482a-8065-404250955baf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "9brF9hNnflXjsFOU",
+  "tags": []
+}
