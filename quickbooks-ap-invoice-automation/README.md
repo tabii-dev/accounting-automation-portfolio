@@ -1,18 +1,50 @@
 # QuickBooks AP Invoice Automation
 
-A production grade accounts payable orchestrator for SMB finance teams running QuickBooks Online. Five validation checks before any invoice posts to the ledger. Materiality based approval routing through Slack. Immutable audit log on every transaction. Tested across five distinct execution paths.
+**Built for SMB founders who are still processing vendor bills on Friday afternoons.**
+
+Status: Shipped. Tested end-to-end against a live QuickBooks Online sandbox. Five execution paths verified. Real audit trail, real bills posted, real Slack approvals. [Skip to the evidence](#what-actually-runs).
+
+---
+
+## The problem this solves
+
+You get bills. From vendors, subcontractors, the utility company, the legal retainer, the SaaS subscriptions you forgot you signed up for. Most weeks it's 20 to 50 invoices. They arrive in your email as PDFs, in your accountant's shared folder, sometimes still on paper.
+
+What happens next is the work nobody trained you for. Someone has to open each one, figure out which expense category it belongs to, get approval if it's above a certain amount, post it to QuickBooks, and pay it on time. If you miss one, you damage the vendor relationship. If you post it wrong, your books are off and your accountant has to fix it at month-end. If you accidentally pay it twice, you spend a week trying to recover the money.
+
+This is the workflow nearly every small business runs manually. The numbers are ugly: manual invoice processing costs $12 to $30 per invoice in time and errors. Automated processing costs $2 to $5. For a business doing 30 invoices a month, that's the difference between $360 to $900 of finance overhead versus $60 to $150.
+
+Bigger companies solve this with Bill.com, Tipalti, or Stampli. Those are good products at scale. They also charge per user, per transaction, and assume you have an AP clerk and a procurement function. Most SMBs have neither. You're the AP clerk. You're also the founder, the CEO, and the person doing the actual work the business sells.
+
+That's what this builds: a system that handles vendor bills without you, in your accounting structure, with rules you can read in plain English, and the discipline of an ACA accountant who knows what an audit trail actually needs to look like.
+
+---
+
+## What it does, in one sentence
+
+When a vendor invoice arrives via webhook, the system runs five validation checks, decides whether it can auto-post or needs your approval in Slack, and writes every decision to an immutable audit log.
+
+## What it does not do
+
+- It does not generate invoices for you to send (that's your customer-facing AR work, handled by a different workflow).
+- It does not pay the bill (you control payment timing through QuickBooks' native bill pay or your bank).
+- It does not extract data from PDFs automatically (an OCR layer feeds the system; that's a separate component).
+- It does not make accounting judgment calls. Material amounts always require a human.
+- It does not replace your accountant. It cleans up the data so they have less to fix at month-end.
+
+The discipline here is deliberate. AP automation that quietly does too much is how you end up with $50,000 of misposted entries at year-end and your accountant asking how this happened.
 
 ---
 
 ## The five checks that run before any invoice posts
 
-Before any accounts payable invoice in this system can write to the general ledger, five sequential checks have to pass.
+Before any vendor bill in this system can write to QuickBooks, five sequential checks have to pass.
 
-The first check verifies that debits and credits balance to two decimal places. The second confirms every account code referenced by the invoice exists in the client's live chart of accounts and is currently active. The third checks whether the accounting period the invoice belongs to is still open in QuickBooks. The fourth verifies that the user submitting the invoice has authorisation to post to those specific accounts. The fifth confirms that a pending audit log entry was written before any of this happened, which is what makes the trail defensible if an auditor ever asks.
+The first check verifies that debits and credits balance to two decimal places. The second confirms every account code referenced by the invoice exists in the chart of accounts and is currently active. The third checks whether the accounting period the invoice belongs to is still open in QuickBooks. The fourth verifies that the user submitting the invoice has authorisation to post to those specific accounts. The fifth confirms that a pending audit log entry was written before any of this happened, which is what makes the trail defensible if your accountant ever asks.
 
 If any check fails, nothing posts to QuickBooks. The audit log gets updated with the failure reason. The upstream system receives an HTTP 422 with a structured body explaining what went wrong and why.
 
-This is what I mean when I say compliance aware automation. It is not certified, it is not audited by me, but it is designed so that the controls an auditor would want to see are actually there. Your accounting firm still signs the returns. My job is to make sure nothing slipped past that should not have.
+This is what I mean when I say compliance aware automation. It is not certified, it is not audited by me, but it is designed so that the controls an auditor would want to see are actually there. Your accountant still signs the returns. My job is to make sure nothing slipped past that should not have.
 
 The full Pre Posting Gate workflow:
 
@@ -20,39 +52,9 @@ The full Pre Posting Gate workflow:
 
 ---
 
-## The problem this solves
+## How it works
 
-Most SMB finance teams I have worked with run accounts payable on Friday afternoons. The controller pulls invoices from a shared inbox, codes them manually, routes approvals through Slack threads or email chains, and posts to QuickBooks one at a time. Mistakes happen: an invoice gets coded to the wrong account, a duplicate gets paid twice, an invoice gets posted to a period that closed yesterday.
-
-The available solutions are either too expensive or too generic. Enterprise platforms like Bill.com and Tipalti charge per user, per transaction, and assume you have an AP clerk and a procurement function. Most SMB finance teams have neither. Generic automation builders, Zapier or Make, can string the integrations together but rarely understand what an audit trail needs to look like, why three way match matters, or what a pre posting validation gate is.
-
-This workflow sits in the gap. It uses the tools an SMB already pays for, QuickBooks Online, Slack, a database for audit logging, and stitches them together with logic that respects how accounting actually works. The client owns the workflow. There is no per user fee. When my engagement ends, the system stays.
-
----
-
-## Who this is for, and who it is not
-
-This workflow is built for:
-
-A growing SMB with a controller running QuickBooks Online, processing somewhere between 50 and 500 AP invoices a month, and an in house finance team of two to five people.
-
-A fractional CFO supporting multiple SMB clients, looking for an automation pattern that can be redeployed across the portfolio without rebuilding from scratch each time.
-
-A small accounting firm whose clients run on QuickBooks Online and who want to offer AP automation as a recurring service tier.
-
-This workflow is not the right fit for:
-
-Enterprises on NetSuite, Sage Intacct, or SAP. The pattern transfers but the implementation does not.
-
-Businesses processing 5,000+ invoices a month. At that scale you want a dedicated AP platform, not a custom workflow.
-
-Anyone who wants the workflow to make accounting judgements without human oversight. Material entries always require a human in the loop here, and that is a feature, not a constraint.
-
----
-
-## What the workflow does
-
-The system is three workflows working together, plus an error notifier as a safety net.
+Three production workflows plus a shared error notifier. About 56 nodes total across all of them.
 
 **Workflow 01: AP Invoice Orchestrator.** The main entry point. An invoice arrives via webhook, typically from an upstream OCR or intake system. The orchestrator runs idempotency checks against the audit log, fetches the vendor record and live chart of accounts from QuickBooks, runs a fraud check on the vendor's bank details, builds the journal entry, redacts PII before any external call, writes the audit log row in PENDING state, then hands off to the Pre Posting Gate.
 
@@ -72,9 +74,9 @@ The approval flow handling APPROVED, REJECTED, and TIMEOUT outcomes:
 
 ---
 
-## The five tested paths
+## What actually runs
 
-The workflow has been tested end to end across five distinct execution paths against a real QuickBooks sandbox. Each path exercises a different decision tree in the orchestrator. The audit log captures every run, which means every test is verifiable, not just claimed.
+Five execution paths tested end-to-end against a real QuickBooks sandbox. Each path exercises a different decision tree in the orchestrator. The audit log captures every run, which means every test is verifiable, not just claimed.
 
 ### Path 1: Auto post (happy path)
 
@@ -113,6 +115,7 @@ The QuickBooks Bills list, showing the bills that did post (paths 1 and 2):
 The audit log in Supabase, showing every run:
 
 ![Supabase audit log](./screenshots/08-supabase-audit-log.png)
+
 ---
 
 ## The simplification story (v0.1 to v0.2)
@@ -153,7 +156,7 @@ Eleven controls survived the cut. Every one is named below with what it does and
 | Structured error responses | Every executable path terminates with a defined HTTP response. No silent failures. | WF01, six terminal Respond nodes |
 | Retry configuration | Every external call (QuickBooks, Slack, Postgres) configured with retryOnFail, maxTries, waitBetweenTries. | All three workflows |
 
-The control set is what makes this defensible to an auditor. Not the n8n workflow graph, not the Slack integration, the eleven controls. If you are bringing this to a client whose books get reviewed, this is the page to show the engagement partner.
+The control set is what makes this defensible to your accountant. Not the n8n workflow graph, not the Slack integration, the eleven controls. If you're bringing this to a client whose books get reviewed, this is the page to show the engagement partner.
 
 ---
 
@@ -173,7 +176,19 @@ A few decisions in this build that are not obvious from the graph but are worth 
 
 ---
 
-## Stack and deployment
+## What's deferred to v2
+
+Honest about this list, because vendors who promise everything are the ones SMB buyers learn to distrust.
+
+- **Real OCR or invoice intake upstream.** The portfolio version assumes webhook delivery of structured JSON. A real client engagement would need an upstream OCR system (Dext, Hubdoc, Bill.com OCR, or a custom intake), or an email parser that extracts invoice data from PDF attachments.
+- **A `vendor_id_hash` column on the audit log.** The current PII redaction hashes the vendor name on each write but stores it inline in the `notes` column. A cleaner pattern is a dedicated `vendor_id_hash` column, which makes downstream queries by vendor faster and cleaner.
+- **A reverse posting workflow.** The audit log captures the QuickBooks Bill ID on every POSTED row, which makes reversal possible. But there is no workflow that actually issues the reversal yet. For a real client this would be Workflow 04: takes an audit log ID, fetches the original Bill, issues the credit memo, and writes a REVERSED row to the audit log linking back to the original.
+- **Per client configuration management.** The current Set Configuration node holds materiality thresholds, approved templates, account scope, and timeout values inline. For a multi client deployment (fractional CFO or accounting firm running this across a portfolio), these would move to a per client config table in Supabase, queried at the start of each run.
+- **Production monitoring.** The error notifier handles unhandled errors, but a real client would want positive monitoring: alerts when no invoices have been processed in 48 hours, alerts when the failure rate exceeds a threshold, weekly summary reports of what got posted versus what got flagged.
+
+---
+
+## The stack
 
 n8n Cloud as the workflow engine. Self hosting works equally well; I built and tested locally before deploying.
 
@@ -205,50 +220,31 @@ To run this against your own QuickBooks sandbox: import the four workflow JSON f
 
 ---
 
-## What I would do differently for a real client engagement
+## What this would cost to run for you
 
-A few things that are sensible for a portfolio build but would change for a paying client.
+The honest answer depends on the shape of your AP, but here are the variables:
 
-**Real OCR or invoice intake upstream.** The portfolio version assumes webhook delivery of structured JSON. A real client engagement would need an upstream OCR system (Dext, Hubdoc, Bill.com OCR, or a custom intake), or an email parser that extracts invoice data from PDF attachments. I have the patterns for both, this just was not the scope here.
+- **Bill volume.** A small business processing 20 to 50 vendor bills per month uses standard QuickBooks and Supabase tiers with room to spare.
+- **n8n hosting.** Self-hosted on a small VPS is $5 to $15/month. n8n Cloud is $20/month for the starter plan.
+- **Supabase.** Free tier covers an SMB audit log comfortably. Pro tier ($25/month) if you want backups and longer retention.
+- **The build itself.** Fixed-price pilot for a single customer engagement, typical range $1,500 to $5,000 depending on the QBO account shape, how many approval tiers you need, and whether you need OCR intake or already have it.
 
-**A `vendor_id_hash` column on the audit log.** The current PII redaction hashes the vendor name on each write but stores it inline in the `notes` column. A cleaner pattern is a dedicated `vendor_id_hash` column, which makes downstream queries by vendor faster and cleaner. I noted this in the simplification report as a v3 improvement.
-
-**A reverse posting workflow.** The audit log captures the QuickBooks Bill ID on every POSTED row, which makes reversal possible. But there is no workflow that actually issues the reversal yet. For a real client this would be Workflow 04: takes an audit log ID, fetches the original Bill, issues the credit memo, and writes a REVERSED row to the audit log linking back to the original.
-
-**Per client configuration management.** The current Set Configuration node holds materiality thresholds, approved templates, account scope, and timeout values inline. For a multi client deployment (fractional CFO or accounting firm running this across a portfolio), these would move to a per client config table in Supabase, queried at the start of each run.
-
-**Production monitoring.** The error notifier handles unhandled errors, but a real client would want positive monitoring: alerts when no invoices have been processed in 48 hours, alerts when the failure rate exceeds a threshold, weekly summary reports of what got posted versus what got flagged. The patterns are simple; I just have not built them here.
+Total ongoing infrastructure: $25 to $70/month, depending on volume. Compare against the time you currently spend on AP and the math is straightforward.
 
 ---
 
 ## Working together
 
-If this is the kind of system your business or your client needs, the fastest way to know whether I am the right person to build it is a 30 minute scoping call.
+If you're an SMB founder, a fractional CFO, or a bookkeeper running AP for SMB clients, and the workflow above looks like it would save you a day per week of bill processing, the fastest way to know if I'm the right person to build for you is a 30-minute scoping call.
 
-On the call:
+I'll map your AP process end to end on the call, tell you whether automation is the right answer, and quote a fixed price if it is. If it's not the right fit, I'll say so.
 
-I will map the AP process end to end from invoice arrival to GL posting. We will identify the bottlenecks worth automating and the ones that probably are not. I will tell you whether a custom n8n build is the right answer for your situation, or whether you should buy something off the shelf and route around the gaps. If it is not the right fit, I will say so on the call and point you to whoever is.
+- **Upwork:** [tabitha-eoke on Upwork](https://www.upwork.com/freelancers/~01954f73840469cae5)
+- **LinkedIn:** [linkedin.com/in/tabitha-oke-n8n](https://www.linkedin.com/in/tabitha-oke-n8n)
+- **Email:** tabithaeoke@gmail.com
 
-Engagements come in three shapes:
-
-**Fixed price pilot.** One well scoped process from kickoff to production. Two to six week timeline depending on integrations. Includes the control map, the runbook, and a 30 day support window after go live.
-
-**Retainer.** For finance teams or fractional CFOs running multiple workflows in production. Monthly retainer covers maintenance, schema changes when your chart of accounts evolves, and a small allowance for new builds.
-
-**Audit and improvement.** For teams that already have automation in place but suspect it is not as defensible as it should be. I review your current workflows, write up what works, what does not, and what specifically needs to change for compliance.
-
-Pricing depends on scope and I do not publish standard rates because the right number depends on your situation. I do not sell hours and I do not sell seats. I sell working systems.
-
-**Contact:**
-
-- Upwork: [tabitha-eoke on Upwork](https://www.upwork.com/freelancers/~01954f73840469cae5)
-- LinkedIn: [linkedin.com/in/tabitha-oke-n8n](https://www.linkedin.com/in/tabitha-oke-n8n)
-- Email: tabithaeoke@gmail.com
-
-I respond within one business day. If you have a brief already written, send it over and I will come to the call with questions, not a sales pitch.
+I respond within one business day.
 
 ---
 
-## License
-
-MIT License. The workflows and code in this case study are published as portfolio pieces, free to read, fork, and learn from. Production deployment in a client engagement requires a direct engagement so the configuration, security, and compliance posture can be tailored to the client's specifics. See `../LICENSE` for the full license terms.
+*Built by Tabitha Oke, ACA. Workflows are MIT-licensed as portfolio pieces. Production deployment in a client engagement requires a direct engagement.*
