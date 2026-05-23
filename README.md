@@ -44,7 +44,7 @@ Invoice intake from a shared inbox or OCR. Vendor lookup against your live chart
 
 Dunning sequences in your voice, segmented by aging bucket, customer payment history, and invoice value tier. Payment matching with tolerance logic for short pays. Escalation rules when an account hits 60 days. Collection activity posted back to QuickBooks or Xero.
 
-**Coming soon.** In development as portfolio workflow 02.
+**Shipped.** Two-workflow system handling overdue invoice detection, tag-aware dunning schedules, payment detection via QBO webhook, and Slack escalation at 60+ days overdue. Tested end-to-end against a live QuickBooks Online sandbox. [Read the case study →](./quickbooks-ar-collections-automation/README.md)
 
 ### Bank and payment gateway reconciliation
 
@@ -102,14 +102,14 @@ Everything I build has explicit validation, human-review gates where they matter
 
 ## Portfolio workflows
 
-| Workflow                                                                | Status         | What it does                                                                                                    |
-| ----------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------- |
-| [AP Invoice Orchestrator](./quickbooks-ap-invoice-automation/README.md) | Shipped        | Invoice intake to GL posting with 5-check pre-posting gate, materiality-based approval, and immutable audit log |
-| AR Collections Agent                                                    | In development | Three-dimensional dunning personalisation with collection activity sync                                         |
-| E-commerce Revenue Reconciliation                                       | In development | Stripe and Shopify payout breakdown with fee, refund, and FX handling                                           |
-| Month-End Close Orchestrator                                            | Planned        | Checklist-driven sequencing for sub-ledger rec, accruals, and controller approval                               |
-| Cash Flow Forecasting Engine                                            | Planned        | 13-week rolling forecast with liquidity risk flags                                                              |
-| Client Document Collection Bot                                          | Planned        | Automated KYC, W-9, and engagement letter capture for accounting firms                                          |
+| Workflow                                                                 | Status         | What it does                                                                                                    |
+| ------------------------------------------------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------- |
+| [AP Invoice Orchestrator](./quickbooks-ap-invoice-automation/README.md)  | Shipped        | Invoice intake to GL posting with 5-check pre-posting gate, materiality-based approval, and immutable audit log |
+| [AR Collections Agent](./quickbooks-ar-collections-automation/README.md) | Shipped        | Tag-aware dunning schedules, payment detection via webhook, 60-day escalation, append-only audit log            |
+| E-commerce Revenue Reconciliation                                        | In development | Stripe and Shopify payout breakdown with fee, refund, and FX handling                                           |
+| Month-End Close Orchestrator                                             | Planned        | Checklist-driven sequencing for sub-ledger rec, accruals, and controller approval                               |
+| Cash Flow Forecasting Engine                                             | Planned        | 13-week rolling forecast with liquidity risk flags                                                              |
+| Client Document Collection Bot                                           | Planned        | Automated KYC, W-9, and engagement letter capture for accounting firms                                          |
 
 ---
 
