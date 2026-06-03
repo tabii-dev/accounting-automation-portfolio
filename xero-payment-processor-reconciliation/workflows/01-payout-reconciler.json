@@ -1,0 +1,2292 @@
+{
+  "name": "WF01 — Payout Reconciler (Stripe + Shopify → Xero)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## WF01: Payout Reconciler\n\n**Project 3, Xero Payment Processor Reconciliation**\n\nOne canvas, two ingestion shapes (Stripe webhook + Shopify cron poll), one shared decomposition and Xero-posting downstream. Decomposes each payout into balanced journal lines and posts to Xero as a Manual Journal.\n\n**Compliance posture**: signature verification (structural in test, HMAC-deferred), idempotency on (processor, payout_id), database-level append-only audit, strict balance validation, retry on every external call.\n\nRead this canvas left to right: section headers (purple) explain each band.\n\nBuild status: Stripe path tested, Shopify path tested, all 6 test paths run.",
+        "height": 280,
+        "width": 1200,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6912,
+        3248
+      ],
+      "id": "28c8c5ca-f45f-4f95-aef6-5474440ba3d5",
+      "name": "Header"
+    },
+    {
+      "parameters": {
+        "content": "## 1. Dual Ingestion (webhook + cron)\n\n**Top branch (Stripe webhook)**: Stripe pushes `payout.paid` or `payout.updated` to the webhook. Signature verification (structural, see ASSUMPTIONS.md for HMAC defer rationale), filter to genuine paid-payout events, tag run context.\n\n**Bottom branch (Shopify cron)**: Shopify Payments has no payout webhook, so this branch polls `GET /shopify_payments/payouts.json?status=paid` daily with a 3-day lookback. Split Out iterates the array, each payout tagged with run context.",
+        "height": 864,
+        "width": 976
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6848,
+        3600
+      ],
+      "id": "a60c2fd4-85b9-427f-930d-4d3d5de9bbf7",
+      "name": "Section 1: Dual Ingestion"
+    },
+    {
+      "parameters": {
+        "content": "## 2. Merge & Idempotency\n\nBoth processors converge here. Single LEFT JOIN query against `payment_recon.payouts` (unique on `processor, payout_id`) determines:\n\n- NEW: continue to processor branch\n- POSTED: return original JournalID with idempotent: true\n- PENDING: return 409 Conflict\n\nFAILED rows allow reprocess so a Xero retry can proceed after credential fixes.",
+        "height": 864,
+        "width": 834,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        7840,
+        3600
+      ],
+      "id": "062fb511-fcbd-4359-b6f1-9cb752bd89b1",
+      "name": "Section 2: Merge & Idempotency"
+    },
+    {
+      "parameters": {
+        "content": "## 3. Dual Branch (fetch + decompose)\n\n**Top branch (Stripe)**: fetch payout detail, paginate balance transactions (starting_after), fetch live account_map, decompose. Maps charge/payment, refund/payment_refund, stripe_fee, adjustment/transfer, payout. Integer minor units throughout.\n\n**Bottom branch (Shopify)**: same shape. Decomposer constructs `adjustment_<reason>` lookup keys for Shopify's adjustment subtypes. Defensive amount parsing handles string-or-numeric major units. Manually unwraps the `{transactions: [...]}` envelope (Stripe's `{data: [...]}` is auto-unwrapped by n8n; Shopify's is not).\n\nThrows on unknown types; first real run surfaces gaps loudly.",
+        "height": 892,
+        "width": 1102,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        8704,
+        3600
+      ],
+      "id": "0b20e92f-b783-4ec9-a580-f2c45849cfa1",
+      "name": "Section 3: Dual Branches"
+    },
+    {
+      "parameters": {
+        "content": "## 4. Shared Validation & Xero Posting\n\nBoth branches merge into this shared chain. PENDING audit row, balance validation, build Xero ManualJournal, POST to Xero, update POSTED with JournalID.\n\n**Strict-fail validation**: debits must equal credits to the cent. No rounding plug in v1. Any imbalance is signal (missing type, wrong map, sign bug), not noise.\n\n**Why account 855 (Clearing) for payout, not 090 (Bank)**: Xero refuses Manual Journals against BANK-type accounts. The clearing account holds the net payout; bank reconciliation handles the clearing→bank movement when the deposit lands. This is the standard accountant-approved pattern.",
+        "height": 1068,
+        "width": 1916,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        9824,
+        3600
+      ],
+      "id": "bc68912d-66ce-4132-86ec-22b75a06e1ba",
+      "name": "Section 4: Validate & Post"
+    },
+    {
+      "parameters": {
+        "content": "## 5. Error Paths & Terminal\n\nFour failure envelopes (Decomposition, Validation, Xero 4xx, Xero 5xx) converge through Update Payouts FAILED → Write FAILED event → Persist FAILED envelope → terminal IF.\n\n**Dual response by source_trigger**: webhook path emits HTTP response (Respond to Webhook); cron path emits no response (NoOp loop continue). The IF on `source_trigger` is the gate that distinguishes them.\n\n**Network failures route to 5xx**: Branch Xero Error 4xx vs 5xx defaults missing httpCode to 0, fails both bounds, lands in 502 envelope. Connection drops, timeouts, retry-exhausted failures are never silently treated as success.",
+        "height": 924,
+        "width": 1800,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        11792,
+        3728
+      ],
+      "id": "78dde573-2035-4920-b131-6a64bb48a86f",
+      "name": "Section 5: Error & Terminal"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-payout-paid",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "e790c8a6-8c07-42eb-8039-98d88f6fcdda",
+      "name": "Stripe Webhook Trigger1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        6912,
+        3920
+      ],
+      "webhookId": "f75b77a7-ed20-4498-9b2f-fa682115e43e",
+      "notes": "Stripe webhook endpoint. responseMode=responseNode lets the terminal Respond node carry the dynamic envelope. rawBody=true exposes the unparsed body for HMAC verification."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.data.object.object }}",
+              "rightValue": "payout",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.data.object.status }}",
+              "rightValue": "paid",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b9478dd0-1844-46db-864b-3763dc8eb2bf",
+      "name": "Filter to Paid Payout1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        7440,
+        3904
+      ],
+      "notes": "Proceed only on a payout that is now paid. payout.created (status=pending) and unrelated payout.updated events fall through the false branch to Set 200 IGNORED."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "workflow_run_id",
+              "value": "={{ \"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g, c => { const r = Math.random()*16|0, v = c===\"x\"?r:(r&0x3|0x8); return v.toString(16); }) }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "processor",
+              "value": "stripe",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "payout_id",
+              "value": "={{ $json.data.object.id }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "payout_date",
+              "value": "={{ new Date($json.data.object.arrival_date * 1000).toISOString().split(\"T\")[0] }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "received_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "source_trigger",
+              "value": "webhook",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5249a666-2824-4eef-9649-ad1a045789d9",
+      "name": "Set Stripe Run Context1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7664,
+        3904
+      ],
+      "notes": "Establishes run context. workflow_run_id is a fresh UUID v4; payout_date converts Stripe unix arrival_date to YYYY-MM-DD."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "7af823de-a9ae-4fcb-8462-642f4bd49e59",
+      "name": "Schedule Trigger1",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        6992,
+        4304
+      ],
+      "notes": "Daily 06:00 UTC poll of Shopify payouts. Can also be triggered manually for testing."
+    },
+    {
+      "parameters": {
+        "url": "=https://clancy-pqkyawsh.myshopify.com/admin/api/2026-04/shopify_payments/payouts.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "paid"
+            },
+            {
+              "name": "date_min",
+              "value": "={{ $now.minus({days: 3}).toISODate() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "324eb3f2-f9f9-4b77-8744-c4cb34200196",
+      "name": "Fetch Shopify Payouts List1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7216,
+        4304
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "sVgAHM2uATiyHK3R",
+          "name": "XERO CREDENTIALS"
+        },
+        "shopifyOAuth2Api": {
+          "id": "mJxkzAUCQ9YN1sjx",
+          "name": "Shopify Access Token account"
+        }
+      },
+      "notes": "Lists payouts with status=paid in the last 3 days. 3-day lookback covers weekend gaps; idempotency dedupes anything already processed."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "payouts",
+        "options": {}
+      },
+      "id": "cdd8a5eb-22eb-40e4-9aed-63e99fae42ab",
+      "name": "Split Out Payouts1",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        7440,
+        4304
+      ],
+      "notes": "Splits response.payouts[] into one item per payout. Empty list terminates cleanly."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "workflow_run_id",
+              "value": "={{ \"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx\".replace(/[xy]/g, c => { const r = Math.random()*16|0, v = c===\"x\"?r:(r&0x3|0x8); return v.toString(16); }) }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "processor",
+              "value": "shopify",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "payout_id",
+              "value": "={{ String($json.id) }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "payout_date",
+              "value": "={{ $json.date }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "received_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "source_trigger",
+              "value": "cron",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6ef393fd-072e-4370-be4c-32aa7abe89d5",
+      "name": "Set Shopify Run Context1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7664,
+        4304
+      ],
+      "notes": "Run context per payout. Shopify payout.date already arrives as YYYY-MM-DD so no conversion needed."
+    },
+    {
+      "parameters": {},
+      "id": "acdaf4b2-dbf0-4968-afcc-67d2f607b89b",
+      "name": "Merge Ingestion1",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        7872,
+        4112
+      ],
+      "notes": "Combines both ingestion paths. From here, both processors share the same downstream."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  p.id,\n  p.status,\n  p.xero_journal_id,\n  (p.id IS NOT NULL) AS row_exists\nFROM (SELECT 1) AS dummy\nLEFT JOIN payment_recon.payouts p\n  ON p.processor = $1 AND p.payout_id = $2",
+        "options": {
+          "queryReplacement": "={{ $json.processor }},={{ $json.payout_id }}"
+        }
+      },
+      "id": "8e6a6070-c94d-4c2a-a136-36df701e1025",
+      "name": "Idempotency Check1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        8096,
+        4112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Looks up existing payouts row by (processor, payout_id). Returns 0 or 1 row; Resolve Idempotency Code materialises the decision."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merges the Postgres lookup result with the upstream run context.\n// Produces a single item per input with idem_decision in {NEW, POSTED, PENDING}.\nconst ctx = $('Merge Ingestion1').first().json;\nconst pgItems = $input.all();\n\nlet existing = null;\nif (pgItems.length > 0 && pgItems[0].json && pgItems[0].json.id) {\n  existing = pgItems[0].json;\n}\n\nlet idem_decision = 'NEW';\nif (existing) {\n  if (existing.status === 'POSTED') idem_decision = 'POSTED';\n  else if (existing.status === 'PENDING') idem_decision = 'PENDING';\n  // FAILED falls through to NEW (allow reprocess)\n}\n\nreturn [{\n  json: {\n    ...ctx,\n    idem_decision,\n    existing_payout_uuid: existing ? existing.id : null,\n    existing_xero_journal_id: existing ? existing.xero_journal_id : null,\n  }\n}];"
+      },
+      "id": "181e367e-e310-40eb-9080-89126ab01e6c",
+      "name": "Resolve Idempotency1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8320,
+        4112
+      ],
+      "notes": "Pivot point: combines Postgres lookup + run context. Sets idem_decision so the downstream Switch is a simple equals check."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r0",
+                    "leftValue": "={{ $json.idem_decision }}",
+                    "rightValue": "POSTED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Idempotent"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.idem_decision }}",
+                    "rightValue": "PENDING",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Conflict"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "leftValue": "={{ $json.idem_decision }}",
+                    "rightValue": "NEW",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "New"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a6727751-0c96-497e-a472-75e09c149a47",
+      "name": "Idempotency Decision1",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        8544,
+        4144
+      ],
+      "notes": "Routes by idem_decision. POSTED -> idempotent envelope, PENDING -> conflict envelope, NEW -> continue to Route by Processor."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r0",
+                    "leftValue": "={{ $json.processor }}",
+                    "rightValue": "stripe",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Stripe"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ $json.processor }}",
+                    "rightValue": "shopify",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Shopify"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b4299b1-15b5-439c-ba27-3f20ebf6fa75",
+      "name": "Route to Processor Branch1",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        8752,
+        4112
+      ],
+      "notes": "Routes to processor-specific fetch + decompose branch."
+    },
+    {
+      "parameters": {
+        "url": "=https://api.stripe.com/v1/payouts/{{ $json.payout_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "options": {}
+      },
+      "id": "7c86f8d1-ea9f-4100-b1aa-1d41661400e2",
+      "name": "Fetch Stripe Payout1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        8976,
+        3968
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "sVgAHM2uATiyHK3R",
+          "name": "XERO CREDENTIALS"
+        },
+        "stripeApi": {
+          "id": "t6ftFzjUZGct8Abh",
+          "name": "Stripe account"
+        }
+      },
+      "notes": "GET /v1/payouts/{id} for authoritative payout amount."
+    },
+    {
+      "parameters": {
+        "url": "https://api.stripe.com/v1/balance_transactions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "payout",
+              "value": "={{ $('Resolve Idempotency1').item.json.payout_id }}"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "query",
+                    "name": "starting_after",
+                    "value": "={{ $json.id }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.has_more === false }}"
+            }
+          }
+        }
+      },
+      "id": "43afde57-21ae-4661-8ef1-ac6b3eb8e750",
+      "name": "Fetch Stripe Balance Transactions1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        9200,
+        3968
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "stripeApi": {
+          "id": "t6ftFzjUZGct8Abh",
+          "name": "Stripe account"
+        }
+      },
+      "notes": "GET /v1/balance_transactions?payout={id}&limit=100, paginated via starting_after until has_more=false."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT transaction_type, xero_account_code, debit_or_credit, description_template FROM payment_recon.account_map WHERE processor = 'stripe' AND active = true;",
+        "options": {}
+      },
+      "id": "689856f3-a3b9-4ce1-91ec-6551af5e13c7",
+      "name": "Fetch Stripe Account Map1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        9424,
+        3968
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Fetches the live Stripe account map. Per Design Q2: per-branch fetch keeps DB calls at one per payout (only the active branch fires)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decomposes a Stripe payout into journal lines using the account_map.\n// THROWS on any unknown BT type — first real run surfaces gaps loudly.\nconst ctx = $('Resolve Idempotency1').item.json;\nconst payout = $('Fetch Stripe Payout1').item.json;\nconst btItems = $('Fetch Stripe Balance Transactions1').all();\nconst mapRows = $('Fetch Stripe Account Map1').all();\n\nconst accountMap = {};\nfor (const row of mapRows) {\n  accountMap[row.json.transaction_type] = {\n    code: row.json.xero_account_code,\n    side: row.json.debit_or_credit,\n    tmpl: row.json.description_template,\n  };\n}\n\nif (btItems.length === 0) {\n  throw new Error(`Empty Stripe balance transactions for payout ${ctx.payout_id} (workflow_run_id=${ctx.workflow_run_id})`);\n}\n\nconst lines = [];\nlet gross = 0, fee = 0, refund = 0, adjustment = 0;\n\nfor (const item of btItems) {\n  const bt = item.json;\n  const map = accountMap[bt.type];\n  if (!map) {\n    throw new Error(`Unknown Stripe BT type: ${bt.type} (workflow_run_id=${ctx.workflow_run_id}, payout_id=${ctx.payout_id}, bt_id=${bt.id})`);\n  }\n\n  // Stripe amounts are signed integer minor units; absolute value goes into the line.\n  const amountMinor = Math.abs(bt.amount);\n\n  switch (bt.type) {\n    case 'charge':\n    case 'payment':\n      gross += amountMinor;\n      break;\n    case 'refund':\n    case 'payment_refund':\n      refund += amountMinor;\n      break;\n    case 'stripe_fee':\n      fee += amountMinor;\n      break;\n    case 'adjustment':\n    case 'transfer':\n      adjustment += amountMinor;\n      break;\n    case 'payout':\n      // The payout BT itself is the net deposit; no category counter.\n      break;\n  }\n\n  lines.push({\n    account_code: map.code,\n    debit_or_credit: map.side,\n    amount_minor: amountMinor,\n    description: map.tmpl.replace('{payout_id}', ctx.payout_id),\n    transaction_type: bt.type,\n    bt_id: bt.id,\n  });\n}\n\nconst netAmountMinor = Math.abs(payout.amount);\n\nreturn [{\n  json: {\n    processor: 'stripe',\n    payout_id: ctx.payout_id,\n    workflow_run_id: ctx.workflow_run_id,\n    payout_date: ctx.payout_date,\n    source_trigger: ctx.source_trigger,\n    received_at: ctx.received_at,\n    lines,\n    line_count: lines.length,\n    gross_amount_minor: gross,\n    net_amount_minor: netAmountMinor,\n    fee_amount_minor: fee,\n    refund_amount_minor: refund,\n    adjustment_amount_minor: adjustment,\n  }\n}];"
+      },
+      "id": "70eefe4b-a5bd-42ba-ace8-00da9fbbec5c",
+      "name": "Decompose Stripe1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9632,
+        3968
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Stripe decomposer. Handles charge/refund (Charges-era) AND payment/payment_refund (PaymentIntents-era). Throws on unknown type or empty basket."
+    },
+    {
+      "parameters": {
+        "url": "=https://clancy-pqkyawsh.myshopify.com/admin/api/2026-04/shopify_payments/payouts/{{ $json.payout_id }}.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyOAuth2Api",
+        "options": {}
+      },
+      "id": "1791c2fd-084b-4ec2-8a44-002cf9bd8127",
+      "name": "Fetch Shopify Payout Detail1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        8976,
+        4256
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "shopifyOAuth2Api": {
+          "id": "mJxkzAUCQ9YN1sjx",
+          "name": "Shopify Access Token account"
+        }
+      },
+      "notes": "Confirms authoritative payout amount before posting (list summary alone is not trusted)."
+    },
+    {
+      "parameters": {
+        "url": "=https://clancy-pqkyawsh.myshopify.com/admin/api/2026-04/shopify_payments/balance/transactions.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "payout_id",
+              "value": "={{ $('Resolve Idempotency1').item.json.payout_id }}"
+            },
+            {
+              "name": "limit",
+              "value": "250"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "responseContainsNextURL",
+              "nextURL": "={{ ($response.headers.link || '').match(/<([^>]+)>;\\s*rel=\"next\"/) ? ($response.headers.link.match(/<([^>]+)>;\\s*rel=\"next\"/)[1]) : '' }}"
+            }
+          }
+        }
+      },
+      "id": "e0b7b87c-1df4-4223-b4c3-82fd0d0f9815",
+      "name": "Fetch Shopify Balance Transactions1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        9200,
+        4256
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "shopifyOAuth2Api": {
+          "id": "mJxkzAUCQ9YN1sjx",
+          "name": "Shopify Access Token account"
+        }
+      },
+      "notes": "GET balance/transactions.json?payout_id=... Shopify cursor pagination via Link header rel=next."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT transaction_type, xero_account_code, debit_or_credit, description_template FROM payment_recon.account_map WHERE processor = 'shopify' AND active = true;",
+        "options": {}
+      },
+      "id": "777e592c-7391-43ba-b68d-df02557b71b0",
+      "name": "Fetch Shopify Account Map1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        9424,
+        4256
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Per-branch Shopify account map fetch."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decomposes a Shopify payout into journal lines. Throws on unknown type or unmapped adjustment_reason.\nconst ctx = $('Resolve Idempotency1').item.json;\nconst payoutDetail = $('Fetch Shopify Payout Detail1').item.json.payout || $('Fetch Shopify Payout Detail1').item.json;\n// Unwrap the response envelope. The HTTP node may return either:\n// - one item with .json = {transactions: [...]} (envelope mode)\n// - many items each with .json = a single transaction (auto-unwrapped mode)\nconst rawItems = $('Fetch Shopify Balance Transactions1').all();\nlet txItems;\nif (rawItems.length === 1 && Array.isArray(rawItems[0].json.transactions)) {\n  // Envelope mode: unwrap manually\n  txItems = rawItems[0].json.transactions.map(t => ({ json: t }));\n} else {\n  // Already a list of transactions\n  txItems = rawItems;\n}\nconst mapRows = $('Fetch Shopify Account Map1').all();\n\nconst accountMap = {};\nfor (const row of mapRows) {\n  accountMap[row.json.transaction_type] = {\n    code: row.json.xero_account_code,\n    side: row.json.debit_or_credit,\n    tmpl: row.json.description_template,\n  };\n}\n\nif (txItems.length === 0) {\n  throw new Error(`Empty Shopify balance transactions for payout ${ctx.payout_id} (workflow_run_id=${ctx.workflow_run_id})`);\n}\n// Coerce string-or-numeric major units to integer minor units.\nfunction toMinor(amount) {\n  if (amount === null || amount === undefined) return 0;\n  const n = typeof amount === 'number' ? amount : parseFloat(amount);\n  if (Number.isNaN(n)) throw new Error(`Non-numeric Shopify amount: ${JSON.stringify(amount)}`);\n  return Math.round(n * 100);\n}\n\nconst lines = [];\nlet gross = 0, fee = 0, refund = 0, adjustment = 0;\n\nfor (const item of txItems) {\n  const tx = item.json;\n  // Adjustments carry an adjustment_reason; build the lookup key as adjustment_<reason>.\n  const lookupKey = tx.type === 'adjustment' ? `adjustment_${tx.adjustment_reason}` : tx.type;\n  const map = accountMap[lookupKey];\n  if (!map) {\n    throw new Error(`Unknown Shopify transaction key: ${lookupKey} (workflow_run_id=${ctx.workflow_run_id}, payout_id=${ctx.payout_id}, tx_id=${tx.id})`);\n  }\n\n  const amountMinor = Math.abs(toMinor(tx.amount));\n\n  switch (tx.type) {\n    case 'charge':\n      gross += amountMinor;\n      break;\n    case 'refund':\n      refund += amountMinor;\n      break;\n    case 'fee':\n      fee += amountMinor;\n      break;\n    case 'adjustment':\n      adjustment += amountMinor;\n      break;\n    case 'payout':\n      // Payout BT itself is the net deposit\n      break;\n  }\n\n  lines.push({\n    account_code: map.code,\n    debit_or_credit: map.side,\n    amount_minor: amountMinor,\n    description: map.tmpl.replace('{payout_id}', ctx.payout_id),\n    transaction_type: lookupKey,\n    tx_id: tx.id,\n  });\n}\n\nconst netAmountMinor = Math.abs(toMinor(payoutDetail.amount));\n\nreturn [{\n  json: {\n    processor: 'shopify',\n    payout_id: ctx.payout_id,\n    workflow_run_id: ctx.workflow_run_id,\n    payout_date: ctx.payout_date,\n    source_trigger: ctx.source_trigger,\n    received_at: ctx.received_at,\n    lines,\n    line_count: lines.length,\n    gross_amount_minor: gross,\n    net_amount_minor: netAmountMinor,\n    fee_amount_minor: fee,\n    refund_amount_minor: refund,\n    adjustment_amount_minor: adjustment,\n  }\n}];"
+      },
+      "id": "d28e0d77-961a-4113-8469-8551eca2ae95",
+      "name": "Decompose Shopify1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9632,
+        4256
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Shopify decomposer. Defensively handles string-or-numeric amount in major units. Throws on unknown type / adjustment_reason."
+    },
+    {
+      "parameters": {},
+      "id": "85a2140d-1280-4c75-b57c-cc425b3312ed",
+      "name": "Merge Decomposed1",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        9856,
+        4112
+      ],
+      "notes": "Joins both decomposer outputs into a single stream for shared validation + posting."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.payouts (workflow_run_id, processor, payout_id, status, currency_code, gross_amount_minor, net_amount_minor, fee_amount_minor, refund_amount_minor, adjustment_amount_minor, line_count, lines_json) VALUES ($1, $2, $3, 'PENDING', 'USD', $4, $5, $6, $7, $8, $9, $10::jsonb) ON CONFLICT (processor, payout_id) DO UPDATE SET status = 'PENDING', failed_check = NULL, gross_amount_minor = EXCLUDED.gross_amount_minor, net_amount_minor = EXCLUDED.net_amount_minor, fee_amount_minor = EXCLUDED.fee_amount_minor, refund_amount_minor = EXCLUDED.refund_amount_minor, adjustment_amount_minor = EXCLUDED.adjustment_amount_minor, line_count = EXCLUDED.line_count, lines_json = EXCLUDED.lines_json, updated_at = now() RETURNING id AS payout_uuid;",
+        "options": {
+          "queryReplacement": "={{ $json.workflow_run_id }},={{ $json.processor }},={{ $json.payout_id }},={{ $json.gross_amount_minor }},={{ $json.net_amount_minor }},={{ $json.fee_amount_minor }},={{ $json.refund_amount_minor }},={{ $json.adjustment_amount_minor }},={{ $json.line_count }},={{ JSON.stringify($json.lines) }}"
+        }
+      },
+      "id": "0c410a9d-29be-43f7-974f-96b6fefb0e53",
+      "name": "Insert PENDING1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        10080,
+        4112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "INSERT ON CONFLICT DO UPDATE: handles FAILED -> reprocess. Identity field triggers protect immutable columns."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.posting_events (payout_uuid, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'RECEIVED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ $json.payout_uuid }},={{ $('Merge Decomposed1').item.json.workflow_run_id }},={{ JSON.stringify({ processor: $('Merge Decomposed1').item.json.processor, payout_id: $('Merge Decomposed1').item.json.payout_id, source_trigger: $('Merge Decomposed1').item.json.source_trigger, received_at: $('Merge Decomposed1').item.json.received_at }) }}"
+        }
+      },
+      "id": "f7b13aa3-b9ec-4344-869c-4b0eba5c2b6e",
+      "name": "Write RECEIVED event1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        10304,
+        4112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Append-only posting_event for RECEIVED. event_data captures source_trigger so audit can distinguish webhook vs cron."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.posting_events (payout_uuid, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'DECOMPOSED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ $('Insert PENDING1').item.json.payout_uuid }},={{ $('Merge Decomposed1').item.json.workflow_run_id }},={{ JSON.stringify({ line_count: $('Merge Decomposed1').item.json.line_count, gross: $('Merge Decomposed1').item.json.gross_amount_minor, net: $('Merge Decomposed1').item.json.net_amount_minor, fee: $('Merge Decomposed1').item.json.fee_amount_minor, refund: $('Merge Decomposed1').item.json.refund_amount_minor, adjustment: $('Merge Decomposed1').item.json.adjustment_amount_minor }) }}"
+        }
+      },
+      "id": "829a4218-760f-41e9-b2b3-3bfb7a69b302",
+      "name": "Write DECOMPOSED event1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        10512,
+        4112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "DECOMPOSED event with totals summary."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Strict-fail validation. No rounding plug (Design Q3).\nconst data = $('Merge Decomposed1').item.json;\nconst lines = data.lines || [];\n\nlet totalDebits = 0, totalCredits = 0;\nfor (const line of lines) {\n  if (line.debit_or_credit === 'debit') totalDebits += line.amount_minor;\n  else if (line.debit_or_credit === 'credit') totalCredits += line.amount_minor;\n  else throw new Error(`Line has invalid debit_or_credit: ${line.debit_or_credit} (workflow_run_id=${data.workflow_run_id}, payout_id=${data.payout_id})`);\n}\n\nif (totalDebits !== totalCredits) {\n  const diff = totalDebits - totalCredits;\n  throw new Error(JSON.stringify({\n    check: 'unbalanced',\n    expected: totalDebits,\n    actual: totalCredits,\n    diff,\n    workflow_run_id: data.workflow_run_id,\n    payout_id: data.payout_id,\n    processor: data.processor,\n  }));\n}\n\n// Forward input plus payout_uuid from Insert PENDING.\nreturn [{\n  json: {\n    ...data,\n    payout_uuid: $('Insert PENDING1').item.json.payout_uuid,\n    validated: true,\n    total_debits_minor: totalDebits,\n    total_credits_minor: totalCredits,\n  }\n}];"
+      },
+      "id": "c44c7334-e2d0-4020-b364-a9a4ed6dfe36",
+      "name": "Validate Balance1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        10736,
+        4112
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "Strict debit=credit check. Throws to error output on imbalance; envelope routes to Set 422 Validation."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.posting_events (payout_uuid, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'VALIDATED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ $json.payout_uuid }},={{ $json.workflow_run_id }},={{ JSON.stringify({ total_debits_minor: $json.total_debits_minor, total_credits_minor: $json.total_credits_minor }) }}"
+        }
+      },
+      "id": "4e8fd2c7-24ed-425d-a1b3-bf9a97b11165",
+      "name": "Write VALIDATED event1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        10960,
+        4112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "VALIDATED event records balanced totals."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Xero ManualJournal request body.\nconst data = $('Set Xero Tenant Id1').first().json;\nconst processorLabel = data.processor === 'stripe' ? 'Stripe' : 'Shopify';\n\nconst journalLines = data.lines.map(line => {\n  const major = parseFloat((line.amount_minor / 100).toFixed(2));\n  const signed = line.debit_or_credit === 'debit' ? major : -major;\n  return {\n    LineAmount: signed,\n    AccountCode: line.account_code,\n    Description: line.description,\n  };\n});\n\nconst journal = {\n  Narration: `${processorLabel} payout ${data.payout_id} reconciliation`,\n  Date: data.payout_date,\n  Status: 'POSTED',\n  JournalLines: journalLines,\n};\n\nreturn [{\n  json: {\n    ...data,\n    xero_request_body: { ManualJournals: [journal] },\n  }\n}];"
+      },
+      "id": "4b012354-3142-4bf7-9b72-d899f74c0758",
+      "name": "Build Xero Manual Journal1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        11392,
+        4112
+      ],
+      "notes": "Positive LineAmount = debit, negative = credit. Integer minor -> signed major USD."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.xero.com/api.xro/2.0/ManualJournals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Xero-tenant-id",
+              "value": "={{ $('Set Xero Tenant Id1').item.json.tenantId }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.xero_request_body) }}",
+        "options": {}
+      },
+      "id": "97134988-97e1-4578-9332-1d84f50a11a7",
+      "name": "POST Xero Manual Journal1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        11616,
+        4112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "sVgAHM2uATiyHK3R",
+          "name": "XERO CREDENTIALS"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "POST /api.xro/2.0/ManualJournals. onError=continueErrorOutput so 4xx/5xx/network failures route to the IF Branch downstream rather than aborting."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.error && $json.error.httpCode ? Number($json.error.httpCode) : 0 }}",
+              "rightValue": 500,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.error && $json.error.httpCode ? Number($json.error.httpCode) : 0 }}",
+              "rightValue": 400,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a0ce8cb2-c594-485e-9741-df71981b48c1",
+      "name": "Branch Xero Error 4xx vs 5xx1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        11840,
+        4304
+      ],
+      "notes": "TRUE = httpCode in [400, 500) -> 4xx envelope. FALSE = 5xx, missing httpCode (timeout/DNS/connection reset), or post-retry exhaustion -> 5xx envelope. Network failures are NOT treated as success."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE payment_recon.payouts SET status = 'POSTED', xero_journal_id = $1, updated_at = now() WHERE id = $2 RETURNING id AS payout_uuid;",
+        "options": {
+          "queryReplacement": "={{ $json.ManualJournals[0].ManualJournalID }},={{ $('Validate Balance1').item.json.payout_uuid }}"
+        }
+      },
+      "id": "e6a28f5d-54b9-4f70-8adb-188264d53a04",
+      "name": "Update Payouts POSTED1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        12176,
+        3968
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Marks payout POSTED with Xero JournalID. Identity-field trigger blocks the other immutable columns."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.posting_events (payout_uuid, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'POSTED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ $json.payout_uuid }},={{ $('Validate Balance1').item.json.workflow_run_id }},={{ JSON.stringify({ xero_journal_id: $('POST Xero Manual Journal1').item.json.ManualJournals[0].ManualJournalID, line_count: $('Validate Balance1').item.json.line_count }) }}"
+        }
+      },
+      "id": "b95e85d7-d236-4829-ab2f-a8e6375ab280",
+      "name": "Write POSTED event1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        12400,
+        3968
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "POSTED event with Xero JournalID for audit + reversal traceability."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 200,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'POSTED', payout_id: $('Validate Balance1').item.json.payout_id, xero_journal_id: $('POST Xero Manual Journal1').item.json.ManualJournals[0].ManualJournalID, line_count: $('Validate Balance1').item.json.line_count }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "source_trigger",
+              "value": "={{ $('Validate Balance1').item.json.source_trigger }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "32eac9f7-8e7c-47ec-9331-9e84b7c02cd6",
+      "name": "Set \"Success 200\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        12608,
+        3968
+      ],
+      "notes": "Terminal success envelope."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 401,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'UNAUTHORIZED', message: 'Invalid Stripe signature' }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "source_trigger",
+              "value": "webhook",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1fed1ca2-7ec2-4cea-a64b-f398107b7143",
+      "name": "Set \"401 UNAUTHORIZED\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7216,
+        4096
+      ],
+      "notes": "Stripe-only. Sig Verify error output lands here. Shopify has no inbound signature."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 200,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'IGNORED', reason: 'not_a_paid_transition' }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "source_trigger",
+              "value": "webhook",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "43c05bf5-ee92-458a-bbd1-2e22c9471d3d",
+      "name": "Set \"200 IGNORED\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7440,
+        4096
+      ],
+      "notes": "Filter to Paid Payout false branch. Stripe sends many non-paid lifecycle events; we 200 them so Stripe doesn't retry."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 200,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'POSTED', payout_id: $json.payout_id, xero_journal_id: $json.existing_xero_journal_id, idempotent: true }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "source_trigger",
+              "value": "={{ $json.source_trigger }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e4c56f7a-3765-4703-bb33-a01532973f6e",
+      "name": "Set \"200 Idempotent\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8752,
+        3904
+      ],
+      "notes": "Existing POSTED row. Returns original JournalID."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 409,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'CONFLICT_PENDING', payout_id: $json.payout_id }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "source_trigger",
+              "value": "={{ $json.source_trigger }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "68b0402e-a2a9-4836-829f-8c21aff9c158",
+      "name": "Set \"409 Conflict\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        8752,
+        4304
+      ],
+      "notes": "Existing PENDING row. Concurrent run in progress."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 422,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "failed_check",
+              "value": "decomposition",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'FAILED', payout_id: $('Resolve Idempotency1').item.json.payout_id, failed_check: 'decomposition', message: ($json.error && $json.error.message) || 'Decomposition error' }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e4",
+              "name": "source_trigger",
+              "value": "={{ $('Resolve Idempotency1').item.json.source_trigger }}",
+              "type": "string"
+            },
+            {
+              "id": "e5",
+              "name": "processor",
+              "value": "={{ $('Resolve Idempotency1').item.json.processor }}",
+              "type": "string"
+            },
+            {
+              "id": "e6",
+              "name": "payout_id",
+              "value": "={{ $('Resolve Idempotency1').item.json.payout_id }}",
+              "type": "string"
+            },
+            {
+              "id": "e7",
+              "name": "workflow_run_id",
+              "value": "={{ $('Resolve Idempotency1').item.json.workflow_run_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a34405ae-7935-485b-9d1a-c587476c6697",
+      "name": "Set \"422 Decomposition\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        9856,
+        4512
+      ],
+      "notes": "Receives error output from both Decompose Stripe and Decompose Shopify. Multi-parent input is intentional."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 422,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "failed_check",
+              "value": "unbalanced",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'FAILED', payout_id: $('Merge Decomposed1').item.json.payout_id, failed_check: 'unbalanced', message: ($json.error && $json.error.message) || 'Validation error' }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e4",
+              "name": "source_trigger",
+              "value": "={{ $('Merge Decomposed1').item.json.source_trigger }}",
+              "type": "string"
+            },
+            {
+              "id": "e5",
+              "name": "processor",
+              "value": "={{ $('Merge Decomposed1').item.json.processor }}",
+              "type": "string"
+            },
+            {
+              "id": "e6",
+              "name": "payout_id",
+              "value": "={{ $('Merge Decomposed1').item.json.payout_id }}",
+              "type": "string"
+            },
+            {
+              "id": "e7",
+              "name": "workflow_run_id",
+              "value": "={{ $('Merge Decomposed1').item.json.workflow_run_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4045c4ec-cd62-4403-8eb9-536b7ca592a1",
+      "name": "Set \"422 Validation\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        10736,
+        4512
+      ],
+      "notes": "Validate Balance error output lands here."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 422,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "failed_check",
+              "value": "xero_4xx",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'FAILED', payout_id: $('Validate Balance1').item.json.payout_id, failed_check: 'xero_4xx', message: ($json.error && $json.error.message) || 'Xero 4xx', http_code: ($json.error && $json.error.httpCode) || null }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e4",
+              "name": "source_trigger",
+              "value": "={{ $('Validate Balance1').item.json.source_trigger }}",
+              "type": "string"
+            },
+            {
+              "id": "e5",
+              "name": "processor",
+              "value": "={{ $('Validate Balance1').item.json.processor }}",
+              "type": "string"
+            },
+            {
+              "id": "e6",
+              "name": "payout_id",
+              "value": "={{ $('Validate Balance1').item.json.payout_id }}",
+              "type": "string"
+            },
+            {
+              "id": "e7",
+              "name": "workflow_run_id",
+              "value": "={{ $('Validate Balance1').item.json.workflow_run_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a57c8475-8dd7-424b-9848-8ae64bf64928",
+      "name": "Set \"422 Xero 4xx\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        12160,
+        4208
+      ],
+      "notes": "Branch Xero Error true branch (httpCode in [400, 500))."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "http_code",
+              "value": 502,
+              "type": "number"
+            },
+            {
+              "id": "e2",
+              "name": "failed_check",
+              "value": "xero_5xx",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "result_body_json",
+              "value": "={{ JSON.stringify({ result: 'FAILED', payout_id: $('Validate Balance1').item.json.payout_id, failed_check: 'xero_5xx', message: ($json.error && $json.error.message) || 'Xero 5xx or network failure', http_code: ($json.error && $json.error.httpCode) || null }) }}",
+              "type": "string"
+            },
+            {
+              "id": "e4",
+              "name": "source_trigger",
+              "value": "={{ $('Validate Balance1').item.json.source_trigger }}",
+              "type": "string"
+            },
+            {
+              "id": "e5",
+              "name": "processor",
+              "value": "={{ $('Validate Balance1').item.json.processor }}",
+              "type": "string"
+            },
+            {
+              "id": "e6",
+              "name": "payout_id",
+              "value": "={{ $('Validate Balance1').item.json.payout_id }}",
+              "type": "string"
+            },
+            {
+              "id": "e7",
+              "name": "workflow_run_id",
+              "value": "={{ $('Validate Balance1').item.json.workflow_run_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "30fcd2fa-a668-4422-ae99-9bb52f8042fe",
+      "name": "Set \"502 Xero 5xx\" envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        12112,
+        4416
+      ],
+      "notes": "Branch Xero Error false branch. Catches 5xx, missing httpCode (timeouts, DNS, connection failures), and post-retry exhaustion. Confirmed: NOT treated as success."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.payouts (workflow_run_id, processor, payout_id, status, failed_check, currency_code) VALUES ($1, $2, $3, 'FAILED', $4, 'USD') ON CONFLICT (processor, payout_id) DO UPDATE SET status = 'FAILED', failed_check = EXCLUDED.failed_check, updated_at = now() RETURNING id AS payout_uuid;",
+        "options": {
+          "queryReplacement": "={{ $json.workflow_run_id }},={{ $json.processor }},={{ $json.payout_id }},={{ $json.failed_check }}"
+        }
+      },
+      "id": "178c2be6-625c-45ee-9884-afeb5e2f9268",
+      "name": "Update Payouts FAILED1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        12496,
+        4416
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Multi-parent: receives from all four FAILED envelopes. ON CONFLICT handles both 'no PENDING row yet' (decomposition fail) and 'PENDING row exists' cases. Identity-field triggers protect immutable columns."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.posting_events (payout_uuid, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'FAILED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "=={{ $json.payout_uuid }},={{ $('Persist FAILED envelope1').item.json.workflow_run_id }},={{ JSON.stringify($('Persist FAILED envelope1').item.json) }}"
+        }
+      },
+      "id": "46cf6e0a-174c-4e4c-812c-72f794b40763",
+      "name": "Write FAILED event1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        12720,
+        4416
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "FAILED posting_event with the full result envelope for audit."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "http_code",
+              "value": "={{ $('Set \"422 Validation\" envelope1').item.json.http_code }}",
+              "type": "number"
+            },
+            {
+              "id": "f2",
+              "name": "result_body_json",
+              "value": "={{ $('Set \"422 Validation\" envelope1').item.json.result_body_json }}",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "source_trigger",
+              "value": "={{ $('Set \"422 Validation\" envelope1').item.json.source_trigger }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4f260045-39b1-4f2e-9e20-75af489579ed",
+      "name": "Persist FAILED envelope1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        12944,
+        4416
+      ],
+      "notes": "Restores envelope fields after the Postgres FAILED writes. Postgres node output may or may not pass through input fields depending on version + config; this guarantees the terminal IF sees http_code/result_body_json/source_trigger."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.source_trigger }}",
+              "rightValue": "webhook",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e04d9e5a-528d-4c87-a8b3-edfebcd638a1",
+      "name": "IF source_trigger == webhook1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        13152,
+        4112
+      ],
+      "notes": "Single terminal gate. Multi-parent: receives from Success, all early-exits (UNAUTHORIZED, IGNORED, Idempotent, Conflict), and Persist FAILED envelope. TRUE -> Respond, FALSE -> NoOp."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.result_body_json }}",
+        "options": {
+          "responseCode": "={{ $json.http_code }}"
+        }
+      },
+      "id": "fb201ef2-63f1-48a4-9f0f-5f2e262a8ec9",
+      "name": "Respond to Webhook1",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        13376,
+        4016
+      ],
+      "notes": "Single dynamic responder. http_code and result_body_json come from whichever envelope fired. The Webhook trigger's responseMode=responseNode wires this back to the caller."
+    },
+    {
+      "parameters": {},
+      "id": "8bb1bdc1-bf72-4048-9e8d-bef84f2b85ed",
+      "name": "NoOp (loop continue)1",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        13376,
+        4208
+      ],
+      "notes": "Shopify cron path terminator. SplitOut item terminates here; next payout in the batch advances naturally."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stripe webhook verification (structural, test-environment).\n//\n// IMPORTANT: True cryptographic HMAC verification is DEFERRED. n8n's Code-node\n// sandbox blocks require('crypto') and require('node:crypto'), and the Webhook\n// node on this plan/version delivers the body already parsed to JSON, so the\n// byte-exact raw payload Stripe signed is not recoverable here. Cryptographic\n// verification needs the raw body (N8N config / plan tier) at deployment. Until\n// then this node performs STRUCTURAL verification: it confirms a Stripe-Signature\n// header is present and well-formed, and that the body is a genuine Stripe event\n// envelope. This proves the control point is wired; it is NOT a substitute for\n// HMAC in production. Documented in ASSUMPTIONS.md.\n//\n// TODO(production): restore HMAC. Either (a) enable raw body and use the n8n\n// Crypto node to HMAC-SHA256 the `${t}.${rawBody}` payload against the signing\n// secret, or (b) verify upstream of n8n. Rotate the signing secret before any\n// client demo. When restoring HMAC, also set ENFORCE_TIMESTAMP = true below.\n\n// Set true in production to reject stale signatures (replay guard). Keep false\n// while testing with pinned data, which is older than the 5-minute window.\nconst ENFORCE_TIMESTAMP = false;\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\n\nconst sigHeader = headers['stripe-signature'] || headers['Stripe-Signature'];\nif (!sigHeader) {\n  throw new Error('Missing Stripe-Signature header');\n}\n\nconst parts = Object.fromEntries(\n  sigHeader.split(',').map(p => { const [k, ...v] = p.split('='); return [k, v.join('=')]; })\n);\nconst timestamp = parts.t;\nconst signature = parts.v1;\nif (!timestamp || !signature) {\n  throw new Error('Malformed Stripe-Signature header');\n}\n\nif (ENFORCE_TIMESTAMP) {\n  const tsSeconds = Number(timestamp);\n  if (!Number.isFinite(tsSeconds)) {\n    throw new Error('Malformed Stripe-Signature timestamp');\n  }\n  const ageSeconds = Math.floor(Date.now() / 1000) - tsSeconds;\n  if (Math.abs(ageSeconds) > 300) {\n    throw new Error(`Stripe-Signature timestamp outside tolerance (age ${ageSeconds}s)`);\n  }\n}\n\n// The Webhook node delivers the parsed body at item.json.body.\nconst event = item.json.body;\nif (!event || typeof event !== 'object') {\n  throw new Error('Webhook body missing or not an object');\n}\nif (event.object !== 'event' || !event.type || !event.data || !event.data.object) {\n  throw new Error('Body is not a well-formed Stripe event envelope');\n}\n\n// Output the EVENT at top level so downstream nodes read $json.data.object.* and\n// $json.type directly (Filter to Paid Payout, Set Stripe Run Context).\nreturn [{ json: event }];\n"
+      },
+      "id": "9d90738a-3350-4917-9dd1-2b003a9ffba7",
+      "name": "Stripe Sig Verify (structural)1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7184,
+        3920
+      ],
+      "onError": "continueErrorOutput",
+      "notes": "HMAC-SHA256 verification of Stripe-Signature. On failure, error output routes to Set 401 UNAUTHORIZED envelope."
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Validate Balance1').first().json;\nreturn [{\n  json: {\n    ...data,\n    tenantId: '1e8dfdcd-877f-4cf5-9a1b-bfd984b8c546',\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        11200,
+        4112
+      ],
+      "id": "67a31f03-1a34-44c0-a081-a32e2d78c0af",
+      "name": "Set Xero Tenant Id1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Stripe Webhook Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Stripe Sig Verify (structural)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter to Paid Payout1": {
+      "main": [
+        [
+          {
+            "node": "Set Stripe Run Context1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set \"200 IGNORED\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Stripe Run Context1": {
+      "main": [
+        [
+          {
+            "node": "Merge Ingestion1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Shopify Payouts List1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Shopify Payouts List1": {
+      "main": [
+        [
+          {
+            "node": "Split Out Payouts1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Payouts1": {
+      "main": [
+        [
+          {
+            "node": "Set Shopify Run Context1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Shopify Run Context1": {
+      "main": [
+        [
+          {
+            "node": "Merge Ingestion1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Ingestion1": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Check1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency Check1": {
+      "main": [
+        [
+          {
+            "node": "Resolve Idempotency1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Idempotency1": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Decision1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotency Decision1": {
+      "main": [
+        [
+          {
+            "node": "Set \"200 Idempotent\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set \"409 Conflict\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route to Processor Branch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route to Processor Branch1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Stripe Payout1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Shopify Payout Detail1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Stripe Payout1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Stripe Balance Transactions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Stripe Balance Transactions1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Stripe Account Map1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Stripe Account Map1": {
+      "main": [
+        [
+          {
+            "node": "Decompose Stripe1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decompose Stripe1": {
+      "main": [
+        [
+          {
+            "node": "Merge Decomposed1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set \"422 Decomposition\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Shopify Payout Detail1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Shopify Balance Transactions1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Shopify Balance Transactions1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Shopify Account Map1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Shopify Account Map1": {
+      "main": [
+        [
+          {
+            "node": "Decompose Shopify1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decompose Shopify1": {
+      "main": [
+        [
+          {
+            "node": "Merge Decomposed1",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Set \"422 Decomposition\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Decomposed1": {
+      "main": [
+        [
+          {
+            "node": "Insert PENDING1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert PENDING1": {
+      "main": [
+        [
+          {
+            "node": "Write RECEIVED event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write RECEIVED event1": {
+      "main": [
+        [
+          {
+            "node": "Write DECOMPOSED event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write DECOMPOSED event1": {
+      "main": [
+        [
+          {
+            "node": "Validate Balance1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Balance1": {
+      "main": [
+        [
+          {
+            "node": "Write VALIDATED event1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set \"422 Validation\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write VALIDATED event1": {
+      "main": [
+        [
+          {
+            "node": "Set Xero Tenant Id1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Xero Manual Journal1": {
+      "main": [
+        [
+          {
+            "node": "POST Xero Manual Journal1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Xero Manual Journal1": {
+      "main": [
+        [
+          {
+            "node": "Update Payouts POSTED1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch Xero Error 4xx vs 5xx1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch Xero Error 4xx vs 5xx1": {
+      "main": [
+        [
+          {
+            "node": "Set \"422 Xero 4xx\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set \"502 Xero 5xx\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Payouts POSTED1": {
+      "main": [
+        [
+          {
+            "node": "Write POSTED event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write POSTED event1": {
+      "main": [
+        [
+          {
+            "node": "Set \"Success 200\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"Success 200\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "IF source_trigger == webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"401 UNAUTHORIZED\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "IF source_trigger == webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"200 IGNORED\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "IF source_trigger == webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"200 Idempotent\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "IF source_trigger == webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"409 Conflict\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "IF source_trigger == webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"422 Decomposition\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "Update Payouts FAILED1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"422 Validation\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "Update Payouts FAILED1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"422 Xero 4xx\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "Update Payouts FAILED1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set \"502 Xero 5xx\" envelope1": {
+      "main": [
+        [
+          {
+            "node": "Update Payouts FAILED1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Payouts FAILED1": {
+      "main": [
+        [
+          {
+            "node": "Write FAILED event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write FAILED event1": {
+      "main": [
+        [
+          {
+            "node": "Persist FAILED envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist FAILED envelope1": {
+      "main": [
+        [
+          {
+            "node": "IF source_trigger == webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF source_trigger == webhook1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "NoOp (loop continue)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stripe Sig Verify (structural)1": {
+      "main": [
+        [
+          {
+            "node": "Filter to Paid Payout1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set \"401 UNAUTHORIZED\" envelope1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Xero Tenant Id1": {
+      "main": [
+        [
+          {
+            "node": "Build Xero Manual Journal1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "edb2ec9e-73f2-446f-8b73-73f3a9b14a08",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "f0SZPqWfiSucWWGK",
+  "tags": []
+}

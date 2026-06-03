@@ -1,0 +1,165 @@
+{
+  "_fixture": {
+    "id": "02-shopify-happy",
+    "description": "Shopify payouts list returned by the scheduled poll, plus payout detail and balance transactions. 2 charges + 1 refund + 3 fees + payout. Balanced: gross 175.00 - refund 25.00 - fees 4.95 = net 145.05.",
+    "expected_outcome": "Per-payout: HTTP n/a (cron path, no response). result=POSTED logged, single Xero ManualJournal posted, payouts row POSTED, full event chain in posting_events.",
+    "test_path": 2,
+    "replay_instructions": "Trigger the Schedule Trigger node manually. Pin the three GET responses in the corresponding Shopify HTTP Request nodes to api_responses below."
+  },
+  "api_responses": {
+    "GET /admin/api/2026-04/shopify_payments/payouts.json?status=paid&date_min=2026-05-25": {
+      "payouts": [
+        {
+          "id": 7777777777,
+          "status": "paid",
+          "date": "2026-05-28",
+          "currency": "USD",
+          "amount": "145.05",
+          "summary": {
+            "adjustments_fee_amount": "0.00",
+            "adjustments_gross_amount": "0.00",
+            "charges_fee_amount": "4.95",
+            "charges_gross_amount": "175.00",
+            "refunds_fee_amount": "0.00",
+            "refunds_gross_amount": "-25.00",
+            "reserved_funds_fee_amount": "0.00",
+            "reserved_funds_gross_amount": "0.00",
+            "retried_payouts_fee_amount": "0.00",
+            "retried_payouts_gross_amount": "0.00"
+          }
+        }
+      ]
+    },
+    "GET /admin/api/2026-04/shopify_payments/payouts/7777777777.json": {
+      "payout": {
+        "id": 7777777777,
+        "status": "paid",
+        "date": "2026-05-28",
+        "currency": "USD",
+        "amount": "145.05",
+        "summary": {
+          "adjustments_fee_amount": "0.00",
+          "adjustments_gross_amount": "0.00",
+          "charges_fee_amount": "4.95",
+          "charges_gross_amount": "175.00",
+          "refunds_fee_amount": "0.00",
+          "refunds_gross_amount": "-25.00"
+        }
+      }
+    },
+    "GET /admin/api/2026-04/shopify_payments/balance/transactions.json?payout_id=7777777777&limit=250": {
+      "transactions": [
+        {
+          "id": 1001,
+          "type": "charge",
+          "amount": "100.00",
+          "fee": "3.20",
+          "net": "96.80",
+          "source_id": 5001001001,
+          "source_type": "Payments::Charge",
+          "source_order_id": 6001,
+          "source_order_transaction_id": 7001,
+          "processed_at": "2026-05-27T10:15:00-04:00",
+          "payout_id": 7777777777,
+          "payout_status": "paid",
+          "currency": "USD"
+        },
+        {
+          "id": 1002,
+          "type": "charge",
+          "amount": "75.00",
+          "fee": "1.75",
+          "net": "73.25",
+          "source_id": 5001001002,
+          "source_type": "Payments::Charge",
+          "source_order_id": 6002,
+          "source_order_transaction_id": 7002,
+          "processed_at": "2026-05-27T11:45:00-04:00",
+          "payout_id": 7777777777,
+          "payout_status": "paid",
+          "currency": "USD"
+        },
+        {
+          "id": 1003,
+          "type": "refund",
+          "amount": "-25.00",
+          "fee": "0.00",
+          "net": "-25.00",
+          "source_id": 5001002001,
+          "source_type": "Payments::Refund",
+          "source_order_id": 6001,
+          "source_order_transaction_id": 7003,
+          "processed_at": "2026-05-27T14:20:00-04:00",
+          "payout_id": 7777777777,
+          "payout_status": "paid",
+          "currency": "USD"
+        },
+        {
+          "id": 1004,
+          "type": "fee",
+          "amount": "-3.20",
+          "fee": "0.00",
+          "net": "-3.20",
+          "source_id": 5001001001,
+          "source_type": "Payments::Charge",
+          "source_order_id": 6001,
+          "processed_at": "2026-05-27T10:15:00-04:00",
+          "payout_id": 7777777777,
+          "payout_status": "paid",
+          "currency": "USD"
+        },
+        {
+          "id": 1005,
+          "type": "fee",
+          "amount": "-1.75",
+          "fee": "0.00",
+          "net": "-1.75",
+          "source_id": 5001001002,
+          "source_type": "Payments::Charge",
+          "source_order_id": 6002,
+          "processed_at": "2026-05-27T11:45:00-04:00",
+          "payout_id": 7777777777,
+          "payout_status": "paid",
+          "currency": "USD"
+        },
+        {
+          "id": 1006,
+          "type": "payout",
+          "amount": "-145.05",
+          "fee": "0.00",
+          "net": "-145.05",
+          "source_id": 7777777777,
+          "source_type": "Payments::Payout",
+          "processed_at": "2026-05-28T00:00:00-04:00",
+          "payout_id": 7777777777,
+          "payout_status": "paid",
+          "currency": "USD"
+        }
+      ]
+    }
+  },
+  "expected_decomposition": {
+    "processor": "shopify",
+    "payout_id": "7777777777",
+    "payout_date": "2026-05-28",
+    "gross_amount_minor": 17500,
+    "refund_amount_minor": 2500,
+    "fee_amount_minor": 495,
+    "adjustment_amount_minor": 0,
+    "net_amount_minor": 14505,
+    "line_count": 6,
+    "expected_journal_lines": [
+      { "account_code": "200", "debit_or_credit": "credit", "amount_minor": 10000, "type": "charge" },
+      { "account_code": "200", "debit_or_credit": "credit", "amount_minor": 7500,  "type": "charge" },
+      { "account_code": "200", "debit_or_credit": "debit",  "amount_minor": 2500,  "type": "refund" },
+      { "account_code": "404", "debit_or_credit": "debit",  "amount_minor": 320,   "type": "fee" },
+      { "account_code": "404", "debit_or_credit": "debit",  "amount_minor": 175,   "type": "fee" },
+      { "account_code": "090", "debit_or_credit": "debit",  "amount_minor": 14505, "type": "payout" }
+    ],
+    "balance_check": {
+      "total_debits_minor": 17500,
+      "total_credits_minor": 17500,
+      "diff_minor": 0
+    }
+  }
+}

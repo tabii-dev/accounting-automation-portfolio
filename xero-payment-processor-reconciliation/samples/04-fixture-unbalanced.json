@@ -1,0 +1,90 @@
+{
+  "_fixture": {
+    "id": "04-unbalanced",
+    "description": "Stripe payout where one balance transaction amount has been edited so the journal lines do not balance. txn_test_pay_02 amount changed from 20000 to 19500 (50.00 less), but the payout.amount stays at 24070. Sum of debits 29500 != sum of credits 30000. Diff: -500 minor (-$5.00).",
+    "expected_outcome": "HTTP 422, result=FAILED, failed_check=unbalanced, message contains {check, expected, actual, diff}. payouts row is FAILED (NOT POSTED). No Xero call. Slack alert via WF99 once it exists.",
+    "test_path": 4,
+    "replay_instructions": "Send the webhook_event body to POST {webhook_url}/stripe-payout-paid with a valid Stripe-Signature. Pin the GET /v1/balance_transactions response to the edited version below (note txn_test_pay_02.amount = 19500 instead of 20000)."
+  },
+  "webhook_event": {
+    "id": "evt_test_04_unbalanced",
+    "object": "event",
+    "type": "payout.paid",
+    "api_version": "2024-09-30.acacia",
+    "created": 1748448000,
+    "data": {
+      "object": {
+        "id": "po_test_04_unbalanced",
+        "object": "payout",
+        "amount": 24070,
+        "arrival_date": 1748448000,
+        "automatic": true,
+        "balance_transaction": "txn_test_po_04",
+        "created": 1748361600,
+        "currency": "usd",
+        "destination": "ba_test_external_bank",
+        "status": "paid",
+        "type": "bank_account"
+      }
+    },
+    "livemode": false
+  },
+  "api_responses": {
+    "GET /v1/payouts/po_test_04_unbalanced": {
+      "id": "po_test_04_unbalanced",
+      "object": "payout",
+      "amount": 24070,
+      "arrival_date": 1748448000,
+      "currency": "usd",
+      "status": "paid",
+      "type": "bank_account"
+    },
+    "GET /v1/balance_transactions?payout=po_test_04_unbalanced&limit=100": {
+      "object": "list",
+      "has_more": false,
+      "data": [
+        { "id": "txn_test_pay_01", "type": "payment", "amount": 10000, "currency": "usd", "description": "Payment A" },
+        { "id": "txn_test_pay_02_TAMPERED", "type": "payment", "amount": 19500, "currency": "usd", "description": "Payment B (tampered: was 20000, now 19500)" },
+        { "id": "txn_test_refund_01", "type": "payment_refund", "amount": -5000, "currency": "usd", "description": "Refund" },
+        { "id": "txn_test_fee_01", "type": "stripe_fee", "amount": -320, "currency": "usd", "description": "Fee A" },
+        { "id": "txn_test_fee_02", "type": "stripe_fee", "amount": -610, "currency": "usd", "description": "Fee B" },
+        { "id": "txn_test_po_04", "type": "payout", "amount": -24070, "currency": "usd", "description": "Payout" }
+      ]
+    }
+  },
+  "expected_decomposition": {
+    "processor": "stripe",
+    "payout_id": "po_test_04_unbalanced",
+    "gross_amount_minor": 29500,
+    "refund_amount_minor": 5000,
+    "fee_amount_minor": 930,
+    "net_amount_minor": 24070,
+    "line_count": 6,
+    "balance_check": {
+      "total_debits_minor": 30000,
+      "total_credits_minor": 29500,
+      "diff_minor": 500,
+      "validation_passes": false
+    }
+  },
+  "expected_failed_response": {
+    "http_code": 422,
+    "result_body": {
+      "result": "FAILED",
+      "payout_id": "po_test_04_unbalanced",
+      "failed_check": "unbalanced",
+      "message": "<JSON string containing {check: 'unbalanced', expected: 30000, actual: 29500, diff: 500, ...}>"
+    },
+    "side_effects": [
+      "payouts row INSERTed with status=PENDING (via Insert PENDING)",
+      "RECEIVED + DECOMPOSED posting_events written",
+      "Validate Balance throws → error output fires",
+      "Set 422 Validation envelope sets failed_check='unbalanced'",
+      "Update Payouts FAILED updates status=FAILED, failed_check=unbalanced",
+      "Write FAILED event posts FAILED row with the imbalance envelope",
+      "Persist FAILED envelope → IF source_trigger='webhook' → Respond 422",
+      "NO Xero call",
+      "WF99 (once built) fires Slack alert"
+    ]
+  }
+}

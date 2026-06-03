@@ -1,0 +1,33 @@
+{
+  "_fixture": {
+    "id": "05-signature-invalid",
+    "description": "Valid Stripe payload body but with a deliberately mangled Stripe-Signature header. The HMAC verification in Stripe Sig Verify rejects it. The error output routes directly to Set 401 UNAUTHORIZED envelope; no Filter, no Idempotency, no DB writes, no Xero call.",
+    "expected_outcome": "HTTP 401, result=UNAUTHORIZED, message='Invalid Stripe signature'. No payouts row, no posting_events, no Xero call. NO Slack alert (signature failures are expected adversarial noise; only post-signature failures alert via WF99).",
+    "test_path": 5,
+    "replay_instructions": "Send the webhook_event body (same as 01-fixture-stripe-happy) to POST {webhook_url}/stripe-payout-paid with the deliberately-broken Stripe-Signature header below. Use curl or similar — n8n's Test Webhook UI may auto-sign for you and defeat the test."
+  },
+  "request": {
+    "method": "POST",
+    "url": "/webhook/stripe-payout-paid",
+    "headers": {
+      "Content-Type": "application/json",
+      "Stripe-Signature": "t=1748448000,v1=00000000000000000000000000000000000000000000000000000000DEADBEEF"
+    },
+    "body": "{\"id\":\"evt_test_05_sig_invalid\",\"object\":\"event\",\"type\":\"payout.paid\",\"api_version\":\"2024-09-30.acacia\",\"created\":1748448000,\"data\":{\"object\":{\"id\":\"po_test_05_sig_invalid\",\"object\":\"payout\",\"amount\":24070,\"arrival_date\":1748448000,\"currency\":\"usd\",\"status\":\"paid\",\"type\":\"bank_account\"}},\"livemode\":false}"
+  },
+  "expected_response": {
+    "http_code": 401,
+    "result_body": {
+      "result": "UNAUTHORIZED",
+      "message": "Invalid Stripe signature"
+    },
+    "side_effects": "NONE. Workflow halts at Stripe Sig Verify error output. Filter, Idempotency, all DB writes, and Xero call are skipped."
+  },
+  "verification_checklist": [
+    "Check n8n execution log for the Stripe Sig Verify error message",
+    "Confirm no row exists in payment_recon.payouts for po_test_05_sig_invalid",
+    "Confirm no row exists in payment_recon.posting_events for this run",
+    "Confirm no entry in Xero ManualJournals (check Xero UI for any new journal dated 2026-05-28 with payout_id po_test_05_sig_invalid in Narration)",
+    "Confirm no #recon-errors Slack message (signature failures do not page)"
+  ]
+}

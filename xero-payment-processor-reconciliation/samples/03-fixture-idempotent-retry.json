@@ -1,0 +1,46 @@
+{
+  "_fixture": {
+    "id": "03-idempotent-retry",
+    "description": "Identical to 01-fixture-stripe-happy. Used to verify that re-delivering the same Stripe webhook (which Stripe does on slow webhook responses) does NOT create a duplicate Xero journal. The Idempotency Check finds the POSTED row and returns the original JournalID with idempotent: true.",
+    "expected_outcome": "HTTP 200, result=POSTED, idempotent=true, xero_journal_id matches the one returned by the first delivery of 01-fixture. No new posting_events row (the workflow exits at the Idempotency Decision Switch before any new DB writes). No new Xero ManualJournal call.",
+    "test_path": 3,
+    "replay_instructions": "After running 01-fixture-stripe-happy to completion (payouts row is POSTED), replay this same webhook payload to POST {webhook_url}/stripe-payout-paid with a valid Stripe-Signature.",
+    "depends_on": "01-fixture-stripe-happy.json"
+  },
+  "webhook_event": {
+    "id": "evt_test_01_stripe_happy",
+    "object": "event",
+    "type": "payout.paid",
+    "api_version": "2024-09-30.acacia",
+    "created": 1748448000,
+    "data": {
+      "object": {
+        "id": "po_test_01_happy",
+        "object": "payout",
+        "amount": 24070,
+        "arrival_date": 1748448000,
+        "automatic": true,
+        "balance_transaction": "txn_test_po_01",
+        "created": 1748361600,
+        "currency": "usd",
+        "description": "STRIPE PAYOUT",
+        "destination": "ba_test_external_bank",
+        "status": "paid",
+        "type": "bank_account"
+      }
+    },
+    "livemode": false
+  },
+  "expected_idempotency_state": {
+    "idempotency_check_returns": "1 row with status='POSTED' and the xero_journal_id from the first delivery",
+    "idempotency_decision": "POSTED",
+    "envelope_fired": "Set \"200 Idempotent\" envelope",
+    "response_body": {
+      "result": "POSTED",
+      "payout_id": "po_test_01_happy",
+      "xero_journal_id": "<the JournalID from the first run>",
+      "idempotent": true
+    },
+    "side_effects": "NONE: no new payouts row, no new posting_events row, no Xero API call."
+  }
+}

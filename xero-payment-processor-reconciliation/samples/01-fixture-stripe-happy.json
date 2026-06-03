@@ -1,0 +1,157 @@
+{
+  "_fixture": {
+    "id": "01-stripe-happy",
+    "description": "Stripe payout.paid (PaymentIntents-era types). 2 payments + 1 payment_refund + 2 stripe_fees + payout. Balanced: gross 300.00 - refund 50.00 - fees 9.30 = net 240.70.",
+    "expected_outcome": "HTTP 200, result=POSTED, single Xero ManualJournal posted, payouts row POSTED with xero_journal_id, full event chain (RECEIVED, DECOMPOSED, VALIDATED, POSTED) in posting_events.",
+    "test_path": 1,
+    "replay_instructions": "Send the webhook_event body to POST {webhook_url}/stripe-payout-paid with a valid Stripe-Signature header (computed against the raw body using STRIPE_WEBHOOK_SECRET). Pin the GET /v1/payouts/{id} and GET /v1/balance_transactions responses in the corresponding HTTP Request nodes to the api_responses below."
+  },
+  "webhook_event": {
+    "id": "evt_test_01_stripe_happy",
+    "object": "event",
+    "type": "payout.paid",
+    "api_version": "2024-09-30.acacia",
+    "created": 1748448000,
+    "data": {
+      "object": {
+        "id": "po_test_01_happy",
+        "object": "payout",
+        "amount": 24070,
+        "arrival_date": 1748448000,
+        "automatic": true,
+        "balance_transaction": "txn_test_po_01",
+        "created": 1748361600,
+        "currency": "usd",
+        "description": "STRIPE PAYOUT",
+        "destination": "ba_test_external_bank",
+        "status": "paid",
+        "type": "bank_account"
+      }
+    },
+    "livemode": false
+  },
+  "api_responses": {
+    "GET /v1/payouts/po_test_01_happy": {
+      "id": "po_test_01_happy",
+      "object": "payout",
+      "amount": 24070,
+      "arrival_date": 1748448000,
+      "automatic": true,
+      "balance_transaction": "txn_test_po_01",
+      "created": 1748361600,
+      "currency": "usd",
+      "destination": "ba_test_external_bank",
+      "status": "paid",
+      "type": "bank_account"
+    },
+    "GET /v1/balance_transactions?payout=po_test_01_happy&limit=100": {
+      "object": "list",
+      "url": "/v1/balance_transactions",
+      "has_more": false,
+      "data": [
+        {
+          "id": "txn_test_pay_01",
+          "object": "balance_transaction",
+          "amount": 10000,
+          "available_on": 1748448000,
+          "created": 1748275200,
+          "currency": "usd",
+          "description": "Payment from customer A",
+          "type": "payment",
+          "fee": 320,
+          "net": 9680,
+          "source": "py_test_01"
+        },
+        {
+          "id": "txn_test_pay_02",
+          "object": "balance_transaction",
+          "amount": 20000,
+          "available_on": 1748448000,
+          "created": 1748275200,
+          "currency": "usd",
+          "description": "Payment from customer B",
+          "type": "payment",
+          "fee": 610,
+          "net": 19390,
+          "source": "py_test_02"
+        },
+        {
+          "id": "txn_test_refund_01",
+          "object": "balance_transaction",
+          "amount": -5000,
+          "available_on": 1748448000,
+          "created": 1748275200,
+          "currency": "usd",
+          "description": "Refund for py_test_01 (partial)",
+          "type": "payment_refund",
+          "fee": 0,
+          "net": -5000,
+          "source": "pyr_test_01"
+        },
+        {
+          "id": "txn_test_fee_01",
+          "object": "balance_transaction",
+          "amount": -320,
+          "available_on": 1748448000,
+          "created": 1748275200,
+          "currency": "usd",
+          "description": "Stripe processing fee (py_test_01)",
+          "type": "stripe_fee",
+          "fee": 0,
+          "net": -320,
+          "source": "py_test_01"
+        },
+        {
+          "id": "txn_test_fee_02",
+          "object": "balance_transaction",
+          "amount": -610,
+          "available_on": 1748448000,
+          "created": 1748275200,
+          "currency": "usd",
+          "description": "Stripe processing fee (py_test_02)",
+          "type": "stripe_fee",
+          "fee": 0,
+          "net": -610,
+          "source": "py_test_02"
+        },
+        {
+          "id": "txn_test_po_01",
+          "object": "balance_transaction",
+          "amount": -24070,
+          "available_on": 1748448000,
+          "created": 1748361600,
+          "currency": "usd",
+          "description": "STRIPE PAYOUT",
+          "type": "payout",
+          "fee": 0,
+          "net": -24070,
+          "source": "po_test_01_happy"
+        }
+      ]
+    }
+  },
+  "expected_decomposition": {
+    "processor": "stripe",
+    "payout_id": "po_test_01_happy",
+    "payout_date": "2026-05-28",
+    "gross_amount_minor": 30000,
+    "refund_amount_minor": 5000,
+    "fee_amount_minor": 930,
+    "adjustment_amount_minor": 0,
+    "net_amount_minor": 24070,
+    "line_count": 6,
+    "expected_journal_lines": [
+      { "account_code": "200", "debit_or_credit": "credit", "amount_minor": 10000, "type": "payment" },
+      { "account_code": "200", "debit_or_credit": "credit", "amount_minor": 20000, "type": "payment" },
+      { "account_code": "200", "debit_or_credit": "debit",  "amount_minor": 5000,  "type": "payment_refund" },
+      { "account_code": "404", "debit_or_credit": "debit",  "amount_minor": 320,   "type": "stripe_fee" },
+      { "account_code": "404", "debit_or_credit": "debit",  "amount_minor": 610,   "type": "stripe_fee" },
+      { "account_code": "090", "debit_or_credit": "debit",  "amount_minor": 24070, "type": "payout" }
+    ],
+    "balance_check": {
+      "total_debits_minor": 30000,
+      "total_credits_minor": 30000,
+      "diff_minor": 0
+    }
+  }
+}
