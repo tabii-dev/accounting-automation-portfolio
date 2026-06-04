@@ -29,24 +29,31 @@ You're probably not in the right place if you need a NetSuite implementation, a 
 I work on a defined set of accounting and finance workflows. Each one solves a specific problem most SMBs have, with the discipline of someone who's read the trial balance, not just connected the API.
 
 ### Accounts payable automation
+
 Bills arrive, get coded, get approved by the right person at the right threshold, and post to QuickBooks. Five validation checks run before anything touches the ledger. Materiality-based approval routing through Slack. Immutable audit log on every transaction. **[Shipped → Read the case study](./quickbooks-ap-invoice-automation/README.md)**
 
 ### Accounts receivable automation
+
 Overdue invoices get chased automatically, in your voice, with reminders that tone up appropriately as time passes. Trusted long-term customers get gentler handling. The moment payment lands, the chasing stops. At 60+ days, the system flags you on Slack because some conversations need a human. **[Shipped → Read the case study](./quickbooks-ar-collections-automation/README.md)**
 
 ### Bank and payment gateway reconciliation
-Stripe and Shopify payout reconciliation that breaks down the fees, refunds, and rolling reserves automatically. No more spending Sunday afternoons matching a $4,200 Stripe deposit to 47 orders. **Coming soon.**
+
+Stripe and Shopify payout reconciliation that breaks down the fees, refunds, and rolling reserves automatically. No more spending Sunday afternoons matching a $4,200 Stripe deposit to 47 orders. **[Shipped → Read the case study](./xero-payment-processor-reconciliation/README.md)**
 
 ### Month-end close orchestration
+
 The checklist that runs your close, sequences the dependencies (bank rec before AR close, AR before AP cutoff, accruals before reports), and routes approvals at the right gates. **Coming soon.**
 
 ### Logic-driven journal automation
+
 Recurring journals, prepayment unwinds, depreciation schedules, accrual reversals. Built so your bookkeeper can adjust the logic without rebuilding the workflow. **Coming soon.**
 
 ### Cash flow forecasting
+
 A 13-week rolling forecast refreshed daily from your bank feed, AR aging, recurring invoices, and payroll commitments. Liquidity flags when things drift. **Coming soon.**
 
 ### Client document collection
+
 For accounting firms and fractional CFOs: the system that chases your clients for the documents they owe you, escalates politely, and files everything in the right folder structure. **Coming soon.**
 
 ---
@@ -75,14 +82,14 @@ Everything I build has explicit validation, human-review gates where they matter
 
 ## Portfolio workflows
 
-| Workflow | Status | What it does |
-|---|---|---|
-| [QuickBooks AP Invoice Automation](./quickbooks-ap-invoice-automation/README.md) | Shipped | Bills get coded, approved, and posted with five validation checks and immutable audit log |
-| [QuickBooks AR Collections Automation](./quickbooks-ar-collections-automation/README.md) | Shipped | Overdue invoices get chased politely, escalated when needed, and the sequence stops the moment payment lands |
-| Stripe + Shopify Revenue Reconciliation | In development | Payout decomposition with fee, refund, and FX handling |
-| Month-End Close Orchestrator | Planned | Checklist-driven close with dependency sequencing and approval gates |
-| Cash Flow Forecasting Engine | Planned | 13-week rolling forecast with liquidity risk flags |
-| Client Document Collection Bot | Planned | Automated KYC, W-9, and engagement letter capture for accounting firms |
+| Workflow                                                                                 | Status         | What it does                                                                                                 |
+| ---------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------ |
+| [QuickBooks AP Invoice Automation](./quickbooks-ap-invoice-automation/README.md)         | Shipped        | Bills get coded, approved, and posted with five validation checks and immutable audit log                    |
+| [QuickBooks AR Collections Automation](./quickbooks-ar-collections-automation/README.md) | Shipped        | Overdue invoices get chased politely, escalated when needed, and the sequence stops the moment payment lands |
+| [Xero Payment Processor Reconciliation](./xero-payment-processor-reconciliation/README.md) | Shipped        | Stripe and Shopify payouts decomposed into balanced Xero Manual Journals with append-only audit log          |
+| Month-End Close Orchestrator                                                             | Planned        | Checklist-driven close with dependency sequencing and approval gates                                         |
+| Cash Flow Forecasting Engine                                                             | Planned        | 13-week rolling forecast with liquidity risk flags                                                           |
+| Client Document Collection Bot                                                           | Planned        | Automated KYC, W-9, and engagement letter capture for accounting firms                                       |
 
 ---
 
