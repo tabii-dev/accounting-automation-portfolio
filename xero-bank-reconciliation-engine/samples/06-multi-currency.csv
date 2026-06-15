@@ -1,0 +1,6 @@
+Date,Amount,Reference,Description,Counterparty,BankAccountCode,Currency
+2026-06-01,1500.00,INV-UK-001,UK client payment,London Consulting Ltd,BANK-GBP,GBP
+2026-06-01,-420.00,BILL-EU-003,EU supplier invoice,Berlin Software GmbH,BANK-EUR,EUR
+2026-06-02,3000.00,INV-AU-005,Australian retainer,Sydney Partners Pty,BANK-AUD,AUD
+2026-06-02,-1200.00,BILL-CA-002,Canadian hosting fees,Toronto Cloud Inc,BANK-CAD,CAD
+2026-06-03,8500.00,INV-SG-001,Singapore project fee,Marina Bay Tech Pte,BANK-SGD,SGD

@@ -1,0 +1,6 @@
+Date,Amount,Reference,Description,Counterparty,BankAccountCode,Currency
+2026-06-01,0.01,MICRO-001,Penny test,Test Vendor,BANK-001,USD
+2026-06-01,-0.01,MICRO-002,Penny debit,Test Vendor,BANK-001,USD
+2026-06-02,99999.99,LARGE-001,Large invoice payment,Enterprise Corp,BANK-001,USD
+2026-06-02,-50000.00,LARGE-002,Quarterly tax remittance,HMRC,BANK-001,GBP
+2026-06-03,0.00,ZERO-001,Zero amount test,,BANK-001,USD

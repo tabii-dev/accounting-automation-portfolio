@@ -1,0 +1,5 @@
+TransactionDate,Amount,Ref,Memo,Payee,Account,Currency
+05/06/2026,750.00,INV-DF-001,Date format DD/MM/YYYY,Format Test Co,BANK-001,GBP
+2026-06-05,750.00,INV-DF-002,Date format YYYY-MM-DD,Format Test Co,BANK-001,GBP
+2026-06-05T14:30:00Z,750.00,INV-DF-003,Date format ISO8601,Format Test Co,BANK-001,GBP
+06/05/2026,-250.00,BILL-DF-001,Ambiguous date format,Supplier Co,BANK-001,GBP

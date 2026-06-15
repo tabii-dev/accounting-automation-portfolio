@@ -1,0 +1,5 @@
+Date,Amount,Reference,Description,Counterparty,BankAccountCode,Currency
+2026-06-05,500.00,INV-2024-0050,Duplicate test line A,Test Client,BANK-001,USD
+2026-06-05,500.00,INV-2024-0050,Duplicate test line A,Test Client,BANK-001,USD
+2026-06-05,500.00,INV-2024-0051,Same amount different ref,Test Client,BANK-001,USD
+2026-06-05,500.00,INV-2024-0050,Duplicate test line A,Test Client,BANK-001,USD

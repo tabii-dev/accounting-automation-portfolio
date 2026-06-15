@@ -1,0 +1,34 @@
+{
+  "events": [
+    {
+      "resourceUrl": "https://api.xero.com/api.xro/2.0/BankTransactions/a1b2c3d4-5678-90ab-cdef-111111111111",
+      "resourceId": "a1b2c3d4-5678-90ab-cdef-111111111111",
+      "eventDateUtc": "2026-06-05T10:30:00.000Z",
+      "eventType": "Update",
+      "eventCategory": "BANK_TRANSACTION",
+      "tenantId": "DEMO_XERO_TENANT_ID",
+      "tenantType": "ORGANISATION"
+    },
+    {
+      "resourceUrl": "https://api.xero.com/api.xro/2.0/BankTransactions/a1b2c3d4-5678-90ab-cdef-222222222222",
+      "resourceId": "a1b2c3d4-5678-90ab-cdef-222222222222",
+      "eventDateUtc": "2026-06-05T10:30:01.000Z",
+      "eventType": "Create",
+      "eventCategory": "BANK_TRANSACTION",
+      "tenantId": "DEMO_XERO_TENANT_ID",
+      "tenantType": "ORGANISATION"
+    },
+    {
+      "resourceUrl": "https://api.xero.com/api.xro/2.0/Invoices/a1b2c3d4-5678-90ab-cdef-333333333333",
+      "resourceId": "a1b2c3d4-5678-90ab-cdef-333333333333",
+      "eventDateUtc": "2026-06-05T10:31:00.000Z",
+      "eventType": "Update",
+      "eventCategory": "INVOICE",
+      "tenantId": "DEMO_XERO_TENANT_ID",
+      "tenantType": "ORGANISATION"
+    }
+  ],
+  "lastEventSequence": 3,
+  "firstEventSequence": 1,
+  "entropy": "DEMO_ENTROPY_VALUE"
+}

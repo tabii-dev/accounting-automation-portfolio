@@ -1,0 +1,283 @@
+{
+  "name": "Payout Reconciler — 99 Error Notifier",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## WF99: Error Notifier\n\nFires on any unhandled error in WF01 (Payout Reconciler). Extracts execution context (which workflow, which node, error message, run ID), writes a row to `payment_recon.posting_events` with event_type 'ERROR' for the audit trail, sends a Slack alert to #recon-errors, and emails the operator.\n\n**Distinct from in-workflow FAILED events**: this catches UNEXPECTED errors (sandbox throws, Postgres connection drops, expression compile errors). Predictable failures (signature, validation, Xero 4xx/5xx) are handled inside WF01 with structured HTTP responses, not via this notifier.\n\n**Wiring**: set WF01's Error Workflow setting to this workflow's ID in Workflow Settings.",
+        "height": 280,
+        "width": 540,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        -176
+      ],
+      "id": "08534fad-b845-477c-a84f-13d614e3993d",
+      "name": "Header"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        208,
+        336
+      ],
+      "id": "5f7918c0-c119-4c6c-ad6b-4815274bbd80",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "workflow_name",
+              "value": "={{ $json.workflow.name }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "workflow_id",
+              "value": "={{ $json.workflow.id }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "failed_node",
+              "value": "={{ $json.execution.lastNodeExecuted }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "error_message",
+              "value": "={{ $json.execution.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "error_stack",
+              "value": "={{ $json.execution.error.stack || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "execution_id",
+              "value": "={{ $json.execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "execution_url",
+              "value": "={{ $json.execution.url }}",
+              "type": "string"
+            },
+            {
+              "id": "a8",
+              "name": "execution_mode",
+              "value": "={{ $json.execution.mode }}",
+              "type": "string"
+            },
+            {
+              "id": "a9",
+              "name": "failed_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "a10",
+              "name": "processor",
+              "value": "={{ $json.execution.data?.resultData?.runData?.['Set Stripe Run Context']?.[0]?.data?.main?.[0]?.[0]?.json?.processor || $json.execution.data?.resultData?.runData?.['Set Shopify Run Context']?.[0]?.data?.main?.[0]?.[0]?.json?.processor || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "a11",
+              "name": "payout_id",
+              "value": "={{ $json.execution.data?.resultData?.runData?.['Set Stripe Run Context']?.[0]?.data?.main?.[0]?.[0]?.json?.payout_id || $json.execution.data?.resultData?.runData?.['Set Shopify Run Context']?.[0]?.data?.main?.[0]?.[0]?.json?.payout_id || 'unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "a12",
+              "name": "workflow_run_id",
+              "value": "={{ $json.execution.data?.resultData?.runData?.['Set Stripe Run Context']?.[0]?.data?.main?.[0]?.[0]?.json?.workflow_run_id || $json.execution.data?.resultData?.runData?.['Set Shopify Run Context']?.[0]?.data?.main?.[0]?.[0]?.json?.workflow_run_id || 'unknown' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        400,
+        336
+      ],
+      "id": "ce4d2d1c-5d35-42df-8e53-28d0b5b3c665",
+      "name": "Extract Error Context"
+    },
+    {
+      "parameters": {
+        "content": "**Extract Error Context**\n\nReads from the failed execution's runData to extract processor + payout_id + workflow_run_id from whichever Run Context node ran (Stripe or Shopify). Falls back to 'unknown' if neither ran.\n\nThis is the only place the failure-context propagates from inside WF01 to here.",
+        "height": 360,
+        "width": 432,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        128,
+        144
+      ],
+      "id": "b46f38ac-98c6-40df-b184-6b245323722d",
+      "name": "Note: Extract Context"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO payment_recon.posting_events (payout_uuid, workflow_run_id, event_type, event_data)\nSELECT p.id, COALESCE(NULLIF($1, 'unknown')::uuid, gen_random_uuid()), 'ERROR', $2::jsonb\nFROM payment_recon.payouts p\nWHERE p.processor = $3 AND p.payout_id = $4\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.workflow_run_id, JSON.stringify({ workflow_name: $json.workflow_name, failed_node: $json.failed_node, error_message: $json.error_message, error_stack: $json.error_stack, execution_id: $json.execution_id, execution_url: $json.execution_url, execution_mode: $json.execution_mode, failed_at: $json.failed_at }), $json.processor, $json.payout_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        640,
+        336
+      ],
+      "id": "3e49b5e3-8f61-49fe-a4ef-777ed4a57a9d",
+      "name": "Log ERROR event",
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**Log ERROR event**\n\nWrites an ERROR row to `payment_recon.posting_events` linked to the payouts row (by processor + payout_id) if one exists. If the failure happened before a payouts row was inserted (e.g. signature failure), the LIMIT 1 returns nothing and no row is written. That's intentional: errors with no payout context skip the audit table and only fire Slack/email.\n\nCredential placeholder, replace on import.",
+        "height": 528,
+        "width": 496,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        592,
+        64
+      ],
+      "id": "b03139a4-28ca-44d1-9eaa-f14fb5c9d439",
+      "name": "Note: Log ERROR"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CHANNEL_ID",
+          "mode": "list",
+          "cachedResultName": "recon-errors"
+        },
+        "text": "=🚨 *Payout Reconciler error*\n\n*Workflow*: {{ $('Extract Error Context').item.json.workflow_name }}\n*Failed node*: {{ $('Extract Error Context').item.json.failed_node }}\n*Error*: {{ $('Extract Error Context').item.json.error_message }}\n\n*Context*\n- Processor: {{ $('Extract Error Context').item.json.processor }}\n- Payout: {{ $('Extract Error Context').item.json.payout_id }}\n- Run ID: {{ $('Extract Error Context').item.json.workflow_run_id }}\n- Mode: {{ $('Extract Error Context').item.json.execution_mode }}\n- Failed at: {{ $('Extract Error Context').item.json.failed_at }}\n\n<{{ $('Extract Error Context').item.json.execution_url }}|View execution in n8n>",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        880,
+        448
+      ],
+      "id": "d50e5989-21c5-47b9-8cb5-36ce544af33b",
+      "name": "Alert Team",
+      "webhookId": "32d036d4-a6ef-4638-b36b-7953374d4037",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "REPLACE_WITH_FROM_EMAIL",
+        "toEmail": "REPLACE_WITH_TO_EMAIL",
+        "subject": "={{ '[Payout Reconciler] Workflow failed: ' + $('Extract Error Context').item.json.workflow_name }}",
+        "html": "=<!DOCTYPE html>\n<html><body style=\"margin:0;padding:0;background:#F9F8F6;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#1A1D23;\">\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\" style=\"background:#F9F8F6;padding:40px 16px;\">\n<tr><td align=\"center\">\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"560\" style=\"max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #EAE9E4;\">\n<tr><td style=\"background:#7F1D1D;padding:20px 32px;\"><div style=\"font-weight:700;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;color:#FCA5A5;\">Payout Reconciler error, action needed</div></td></tr>\n<tr><td style=\"padding:32px;\">\n<h1 style=\"margin:0 0 8px;font-size:22px;font-weight:700;line-height:1.2;color:#1A1D23;\">A workflow failed</h1>\n<p style=\"margin:0 0 24px;font-size:14px;color:#6B7280;line-height:1.6;\">An execution of the Payout Reconciler errored. Details below.</p>\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\" style=\"margin:0 0 24px;border-collapse:collapse;\">\n<tr><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;width:130px;vertical-align:top;\">Workflow</td><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.workflow_name }}</td></tr>\n<tr><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Failed node</td><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:14px;color:#1A1D23;font-weight:600;\">{{ $('Extract Error Context').item.json.failed_node }}</td></tr>\n<tr><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Error</td><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-family:Consolas,Monaco,monospace;font-size:13px;color:#7F1D1D;background:#FEF2F2;padding:10px 12px;border-radius:6px;\">{{ $('Extract Error Context').item.json.error_message }}</td></tr>\n<tr><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Processor</td><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.processor }}</td></tr>\n<tr><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Payout</td><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.payout_id }}</td></tr>\n<tr><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Time</td><td style=\"padding:10px 0;border-bottom:1px solid #EAE9E4;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.failed_at }}</td></tr>\n<tr><td style=\"padding:10px 0;font-size:12px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;vertical-align:top;\">Mode</td><td style=\"padding:10px 0;font-size:14px;color:#1A1D23;\">{{ $('Extract Error Context').item.json.execution_mode }}</td></tr>\n</table>\n<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin:0 0 8px;\"><tr><td style=\"background:#1A1D23;border-radius:8px;\"><a href=\"{{ $('Extract Error Context').item.json.execution_url }}\" style=\"display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;\">View execution in n8n</a></td></tr></table>\n<p style=\"margin:24px 0 0;font-size:11px;color:#9CA3AF;line-height:1.6;\">Execution ID: {{ $('Extract Error Context').item.json.execution_id }}<br>Audit row logged to payment_recon.posting_events if a payouts row existed for this run.</p>\n</td></tr></table></td></tr></table></body></html>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        880,
+        272
+      ],
+      "id": "7e53750a-399c-496c-a7d6-a56d1e5554d5",
+      "name": "Notify on Failure",
+      "webhookId": "5efccb8a-aa70-4a06-8a35-329061c9d0d0",
+      "credentials": {
+        "smtp": {
+          "id": "uRagLtrXkHHBC3Nt",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Error Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Error Context": {
+      "main": [
+        [
+          {
+            "node": "Log ERROR event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log ERROR event": {
+      "main": [
+        [
+          {
+            "node": "Alert Team",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify on Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "33fb1419-1c77-45b2-9a78-5e81e820ca0f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "voXUonjtFRKq47rp",
+  "tags": []
+}

@@ -1,0 +1,7 @@
+Date,Amount,Reference,Description,Counterparty,BankAccountCode,Currency
+2026-06-01,5000.00,INV-2024-0039,Retainer payment Q2,GlobalTech SA,BANK-001,USD
+2026-06-01,-2300.00,BILL-0082,Software licence renewal,Atlassian,BANK-001,USD
+2026-06-01,-75.00,,Bank service charge,,BANK-001,USD
+2026-06-02,150.00,,Interest received,,BANK-001,USD
+2026-06-02,-12500.00,BILL-0085,Quarterly rent payment,Regus Serviced Offices,BANK-001,USD
+2026-06-03,820.00,INV-2024-0040,Ad hoc project delivery,Sunrise Media,BANK-001,USD

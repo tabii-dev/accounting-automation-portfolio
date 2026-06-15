@@ -1,0 +1,1293 @@
+{
+  "name": "WF01 — Bank Reconciliation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "1iA_63eAvvfTNDYpiS2sD7aD6drJ-_dTT",
+          "mode": "list",
+          "cachedResultName": "Bank Reconciliation",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1iA_63eAvvfTNDYpiS2sD7aD6drJ-_dTT"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "a2ad81ae-97a0-404c-ad71-4d9d312fdadc",
+      "name": "GDrive: New CSV",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        64,
+        752
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "dJTOAcKVsxB29ZaU",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Replace PLACEHOLDER_INBOX_FOLDER_ID with the Google Drive folder ID for bank-statements-inbox. To also catch re-uploads, change event to fileUpdated."
+    },
+    {
+      "parameters": {
+        "jsCode": "const run_id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n  const r = Math.random() * 16 | 0;\n  const v = c === 'x' ? r : (r & 0x3 | 0x8);\n  return v.toString(16);\n});\n\nreturn [{\n  json: {\n    run_id,\n    run_date: new Date().toISOString().split('T')[0],\n    trigger_source: 'gdrive'\n  }\n}];"
+      },
+      "id": "d721163b-20ba-440d-9960-cc6e4c6be7ef",
+      "name": "Set Poll Run Vars",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('GDrive: New CSV').first().json.id }}"
+        },
+        "options": {}
+      },
+      "id": "832d6429-5251-4d85-a575-dcbb443cea04",
+      "name": "Download CSV",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        576,
+        752
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "dJTOAcKVsxB29ZaU",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileFormat": "csv",
+        "options": {
+          "headerRow": true
+        }
+      },
+      "id": "db5cadaf-5383-4c71-823e-a02f8948b592",
+      "name": "Parse CSV",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [
+        848,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nif (items.length === 0) return [];\n\nconst runId = $('Set Poll Run Vars').first().json.run_id;\nconst ordinalMap = {};\nconst results = [];\n\nfor (const item of items) {\n  const raw = item.json;\n  const bank_account_code = (raw.BankAccountCode || raw.bank_account_code || raw.Account || '').toString().trim();\n  const txn_date_raw = raw.Date || raw.TransactionDate || raw.txn_date || '';\n  const txn_date = txn_date_raw.includes('/')\n    ? txn_date_raw.split('/').reverse().join('-')\n    : txn_date_raw.split('T')[0];\n\n  const rawAmount = parseFloat(raw.Amount || raw.amount || '0');\n  const direction = rawAmount < 0\n    || (raw.Type || '').toLowerCase() === 'debit'\n    || (raw.Direction || '').toLowerCase() === 'money_out'\n    ? 'money_out' : 'money_in';\n  const amount_minor_units = Math.round(Math.abs(rawAmount) * 100);\n\n  const reference_text = (raw.Reference || raw.reference_text || raw.Ref || '').toString().trim() || null;\n  const description_text = (raw.Description || raw.description_text || raw.Memo || '').toString().trim() || null;\n  const counterparty_text = (raw.Counterparty || raw.counterparty_text || raw.Payee || raw.Payer || '').toString().trim() || null;\n  const currency_code = (raw.Currency || raw.currency_code || 'USD').toString().trim().toUpperCase();\n\n  const ordKey = [bank_account_code, txn_date, amount_minor_units, direction, reference_text || ''].join('|');\n  ordinalMap[ordKey] = (ordinalMap[ordKey] || 0) + 1;\n  const ordinal = ordinalMap[ordKey];\n\n  results.push({\n    json: {\n      bank_account_code,\n      txn_date,\n      amount_minor_units,\n      direction,\n      reference_text,\n      description_text,\n      counterparty_text,\n      currency_code,\n      ordinal,\n      source: 'csv',\n      ingest_run_id: runId,\n      raw_payload: raw\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "66895694-255f-4b1c-9ae9-56b40bc3d016",
+      "name": "Normalize + Ordinal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH computed AS (\n  SELECT encode(\n    digest(\n      concat_ws('|', $1, $2, $3::text, $4, coalesce($5, ''), $6::text),\n      'sha256'\n    ),\n    'hex'\n  ) AS h\n)\nINSERT INTO bank_recon.statement_lines (\n  statement_line_id, line_hash, ingest_run_id, source,\n  bank_account_code, txn_date, amount_minor_units,\n  currency_code, direction, reference_text, description_text,\n  counterparty_text, raw_payload, status\n)\nSELECT\n  h, h, $7, $8, $1, $2::date, $3::bigint, $9, $4, $5, $10, $11, $12::jsonb, 'ingested'\nFROM computed\nON CONFLICT (line_hash) DO NOTHING\nRETURNING statement_line_id, line_hash;",
+        "options": {
+          "queryReplacement": "={{ [$json.bank_account_code, $json.txn_date, $json.amount_minor_units, $json.direction, $json.reference_text, $json.ordinal, $json.ingest_run_id, $json.source, $json.currency_code, $json.description_text, $json.counterparty_text, JSON.stringify($json.raw_payload)] }}"
+        }
+      },
+      "id": "3fd0c223-70c9-47e6-ad20-3ee68ff7758d",
+      "name": "Idempotent Upsert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1360,
+        752
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sl.statement_line_id, sl.bank_account_code, sl.txn_date,\n  sl.amount_minor_units, sl.currency_code, sl.direction,\n  sl.reference_text, sl.description_text, sl.counterparty_text,\n  sl.status, $1 AS run_id, $2 AS trigger_source,\n  (SELECT jsonb_object_agg(param, value) FROM bank_recon.config) AS config\nFROM bank_recon.statement_lines sl\nWHERE sl.status IN ('ingested', 'needs_review')\nORDER BY sl.txn_date ASC;",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Set Poll Run Vars').isExecuted ? $('Set Poll Run Vars').first().json.run_id : $('Extract + Set Webhook Vars').first().json.run_id,\n  $('Set Poll Run Vars').isExecuted ? $('Set Poll Run Vars').first().json.trigger_source : 'webhook'\n] }}"
+        }
+      },
+      "id": "2503fcb6-07d4-4952-94c5-848ec62348d0",
+      "name": "Select Eval Set",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1824,
+        752
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "xero-bank-webhook",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "58935e49-ef5c-4879-8b5f-0ee2377f0dad",
+      "name": "Xero Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        64,
+        1120
+      ],
+      "webhookId": "5c046c30-cf01-405b-a50f-b564305e8ad2",
+      "notes": "Xero webhook endpoint. responseMode=responseNode defers the HTTP response to the Respond 200 / Respond 401 nodes. rawBody=true exposes unparsed body for HMAC verification."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Xero webhook verification (structural, test-environment).\n//\n// IMPORTANT: True cryptographic HMAC verification is DEFERRED. The n8n Webhook\n// node on this plan does not reliably preserve the byte-exact raw payload Xero\n// signed, and the Code-node sandbox blocks require('crypto'). Until raw body\n// access is available at deployment, this node performs STRUCTURAL\n// verification: x-xero-signature header present and well-formed (base64\n// SHA256 shape), and body is a valid Xero webhook envelope. This proves the\n// control point is wired; it is NOT a substitute for HMAC in production.\n//\n// TODO(production): restore HMAC via the n8n Crypto node over the raw body\n// against the webhook signing key. Rotate the signing key before client use.\n\nconst webhookData = $('Xero Webhook').first().json;\nconst headers = webhookData.headers || {};\n\nlet body = webhookData.body || {};\nif (typeof body === 'string') {\n  try { body = JSON.parse(body); }\n  catch (e) { return [{ json: { verified: false, reason: 'unparseable_body' } }]; }\n}\n\nconst sigHeader = headers['x-xero-signature'] || headers['X-Xero-Signature'];\n\nif (!sigHeader) {\n  return [{ json: { verified: false, reason: 'missing_signature_header' } }];\n}\nif (!/^[A-Za-z0-9+/]{43}=$/.test(sigHeader)) {\n  return [{ json: { verified: false, reason: 'malformed_signature_header' } }];\n}\n\nconst hasEvents = Array.isArray(body.events);\nconst hasSequences = typeof body.firstEventSequence === 'number'\n                  && typeof body.lastEventSequence === 'number';\nconst hasEntropy = typeof body.entropy === 'string';\n\nif (!hasEvents || !hasSequences || !hasEntropy) {\n  return [{ json: { verified: false, reason: 'malformed_xero_envelope' } }];\n}\n\nreturn [{ json: { verified: true, payload: body } }];"
+      },
+      "id": "cc8a981b-b723-4c51-bff8-de25f3942f0e",
+      "name": "Verify HMAC + ITR Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        1120
+      ],
+      "notes": "Returns {verified: true/false}. Valid HMAC with empty body (ITR) returns verified:true with empty payload; event extraction downstream finds nothing to process and exits cleanly."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "hmac-check",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "aa4345c4-b366-4866-b37f-e6b076e272a6",
+      "name": "HMAC Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        848,
+        1120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {}
+      },
+      "id": "7d8d0b5c-7f07-475d-a10a-4a0b4937a586",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1104,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "086eea80-2cc4-47bf-80cc-2c1bff09cb2a",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1104,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.payload;\n\nconst ALLOWED_CATEGORIES = ['INVOICE', 'CONTACT', 'CREDITNOTE'];\n\nconst events = (payload.events || []).filter(e =>\n  ALLOWED_CATEGORIES.includes(e.category) || ALLOWED_CATEGORIES.includes(e.eventCategory)\n);\n\nif (events.length === 0) return [];\n\nconst run_id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n  const r = Math.random() * 16 | 0;\n  const v = c === 'x' ? r : (r & 0x3 | 0x8);\n  return v.toString(16);\n});\n\nreturn [{\n  json: {\n    run_id,\n    run_date: new Date().toISOString().split('T')[0],\n    trigger_source: 'webhook',\n    event_count: events.length,\n    events: events\n  }\n}];"
+      },
+      "id": "4bd49b09-7d12-4251-943e-46912f108ad7",
+      "name": "Extract + Set Webhook Vars",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "e565ba9a-d01c-4117-b4da-23d7d0f0dc74",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2064,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "={{ 'Type==\"' + ($json.direction === 'money_in' ? 'ACCREC' : 'ACCPAY') + '\" AND Status==\"AUTHORISED\"' }}"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Xero-tenant-id",
+              "value": "1e8dfdcd-877f-4cf5-9a1b-bfd984b8c546"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f9b30f47-5e40-4989-abad-cb56219c8439",
+      "name": "Fetch Xero Candidates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2176,
+        1120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "sVgAHM2uATiyHK3R",
+          "name": "XERO CREDENTIALS"
+        }
+      },
+      "notes": "DEMO: Xero tenant ID hardcoded. Move to env var or credential store in production. Fetches page 1 only; add pagination for 100+ outstanding invoices."
+    },
+    {
+      "parameters": {
+        "jsCode": "const line = $('Split In Batches').first().json;\nconst xeroResponse = $input.first().json;\nconst invoices = xeroResponse.Invoices || [];\nconst config = line.config || {};\n\n// Config keys aligned with bank_recon.config schema\nconst tolPct = parseFloat(config.tolerance_percentage);\nconst tolAbs = parseFloat(config.tolerance_absolute_minor);\nconst dateWindowDays = parseInt(config.date_window_days, 10);\nconst threshold = parseFloat(config.autoclear_threshold);\nconst refWeight = parseFloat(config.weight_reference);\nconst contactWeight = parseFloat(config.weight_contact);\n\nconst lineDate = new Date(line.txn_date);\nconst lineAmount = parseInt(line.amount_minor_units, 10);\n\nlet bestMatch = null;\nlet bestScore = 0;\n\nfor (const inv of invoices) {\n  // Direction gate\n  const invDir = inv.Type === 'ACCREC' ? 'money_in' : 'money_out';\n  if (invDir !== line.direction) continue;\n\n  // Amount gate: abs(diff) <= max(absolute floor, percentage of line amount)\n  const invAmount = Math.round(parseFloat(inv.AmountDue || inv.Total || '0') * 100);\n  const amtDiff = Math.abs(invAmount - lineAmount);\n  const maxAmtDiff = Math.max(tolAbs, lineAmount * tolPct);\n  if (amtDiff > maxAmtDiff) continue;\n\n  // Date gate: payment must fall within the invoice's lifecycle.\n  // Valid range: (issue date minus window) to (due date plus window).\n  const invIssueDate = new Date(inv.DateString || inv.Date);\n  const invDueDate = new Date(inv.DueDateString || inv.DueDate || inv.DateString);\n  const earliestValid = new Date(invIssueDate.getTime() - dateWindowDays * 86400000);\n  const latestValid = new Date(invDueDate.getTime() + dateWindowDays * 86400000);\n  if (lineDate < earliestValid || lineDate > latestValid) continue;\n\n  const daysFromDue = Math.round((lineDate - invDueDate) / 86400000);\n\n  // Reference score\n  let refScore = 0;\n  if (line.reference_text && inv.InvoiceNumber) {\n    const ref = line.reference_text.toLowerCase();\n    const num = inv.InvoiceNumber.toLowerCase();\n    if (ref.includes(num) || num.includes(ref)) {\n      refScore = 1.0;\n    } else {\n      const shorter = ref.length < num.length ? ref : num;\n      const longer = ref.length >= num.length ? ref : num;\n      if (longer.includes(shorter)) refScore = shorter.length / longer.length;\n    }\n  }\n\n  // Contact score\n  let contactScore = 0;\n  if (line.counterparty_text && inv.Contact && inv.Contact.Name) {\n    const cp = line.counterparty_text.toLowerCase();\n    const cn = inv.Contact.Name.toLowerCase();\n    if (cp === cn) contactScore = 1.0;\n    else if (cp.includes(cn) || cn.includes(cp)) contactScore = 0.7;\n  }\n\n  const score = (refScore * refWeight) + (contactScore * contactWeight);\n\n  if (score > bestScore) {\n    bestScore = score;\n    bestMatch = {\n      xero_document_id: inv.InvoiceID,\n      xero_document_type: inv.Type === 'ACCREC' ? 'invoice' : 'bill',\n      xero_document_number: inv.InvoiceNumber,\n      xero_contact_name: inv.Contact ? inv.Contact.Name : null,\n      xero_amount_due: invAmount,\n      match_score: Math.round(score * 100) / 100,\n      amount_diff_minor: amtDiff,\n      days_from_due: daysFromDue\n    };\n  }\n}\n\nreturn [{\n  json: {\n    ...line,\n    v1_matched: bestMatch !== null && bestScore >= threshold,\n    v1_match: bestMatch,\n    v1_best_score: Math.round(bestScore * 100) / 100\n  }\n}];"
+      },
+      "id": "6a5f41c9-2528-4d96-9280-6efa2da484fc",
+      "name": "Evaluate Match",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2432,
+        1120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "match-check",
+              "leftValue": "={{ $json.v1_matched }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a89f023e-53c5-452a-8606-b18b63e0d011",
+      "name": "Match Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        1120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH supersede AS (\n  UPDATE bank_recon.proposals\n  SET status = 'superseded', updated_at = now()\n  WHERE statement_line_id = $1\n    AND status = 'proposed'\n),\nnew_proposal AS (\n  INSERT INTO bank_recon.proposals (\n    id, statement_line_id, proposal_type, candidate_kind,\n    candidate_ref, candidate_label, confidence,\n    score_breakdown, decided_by, status\n  ) VALUES (\n    gen_random_uuid(), $1, 'match', $2,\n    $3, $4, $5,\n    $6::jsonb, 'engine', 'proposed'\n  )\n  RETURNING id\n),\nupdate_status AS (\n  UPDATE bank_recon.statement_lines\n  SET status = 'matched_proposed', updated_at = now()\n  WHERE statement_line_id = $1\n)\nINSERT INTO public.audit_log (\n  workflow_name, workflow_version, workflow_run_id,\n  action_type, target_system, target_record_id,\n  actor, actor_type, status,\n  after_state, retention_until, timestamp_initiated\n)\nVALUES (\n  'xero-bank-reconciliation-engine', '0.1.0', $7,\n  'MATCH_PROPOSED', 'supabase', $1,\n  'engine', 'automation', 'COMPLETED',\n  jsonb_build_object(\n    'statement_line_id', $1,\n    'proposal_id', (SELECT id FROM new_proposal),\n    'candidate_kind', $2,\n    'candidate_ref', $3,\n    'candidate_label', $4,\n    'confidence', $5,\n    'score_breakdown', $6::jsonb,\n    'decided_by', 'engine'\n  ),\n  (now()::date + interval '7 years'),\n  now()\n)\nRETURNING after_state;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.statement_line_id,\n  $json.v1_match.xero_document_type,\n  $json.v1_match.xero_document_id,\n  $json.v1_match.xero_document_number || 'N/A',\n  $json.v1_match.match_score,\n  JSON.stringify($json.v1_match),\n  $json.run_id\n] }}"
+        }
+      },
+      "id": "33591772-202e-4ca1-8b38-3c7f956fe6e7",
+      "name": "Write Match Proposal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3200,
+        1104
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  id,\n  vendor_pattern,\n  description_pattern,\n  amount_min_minor,\n  amount_max_minor,\n  direction,\n  account_code,\n  priority,\n  hit_count\nFROM bank_recon.categorisation_rules\nWHERE active = true\nORDER BY priority ASC;",
+        "options": {}
+      },
+      "id": "ff55733c-67ff-4755-be10-964b82fd4440",
+      "name": "Load Cat Rules",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2960,
+        1424
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const line = $('Evaluate Match').first().json;\nconst rules = $input.all().map(r => r.json);\n\nif (!rules.length || !rules[0].id) {\n  return [{ json: { ...line, rule_hit: false, rule_match: null } }];\n}\n\nfor (const rule of rules) {\n  if (rule.direction && rule.direction !== line.direction) continue;\n  if (rule.amount_min_minor && line.amount_minor_units < rule.amount_min_minor) continue;\n  if (rule.amount_max_minor && line.amount_minor_units > rule.amount_max_minor) continue;\n\n  if (rule.vendor_pattern) {\n    const counterparty = (line.counterparty_text || '').toLowerCase();\n    if (!counterparty.includes(rule.vendor_pattern.toLowerCase())) continue;\n  }\n\n  if (rule.description_pattern) {\n    const descText = [line.description_text || '', line.reference_text || ''].join(' ').toLowerCase();\n    if (!descText.includes(rule.description_pattern.toLowerCase())) continue;\n  }\n\n  return [{\n    json: {\n      ...line,\n      rule_hit: true,\n      rule_match: {\n        rule_id: rule.id,\n        account_code: rule.account_code,\n        confidence: 1.0,\n        explanation: 'Matched rule ' + rule.id + ' (vendor: ' + (rule.vendor_pattern || 'any') + ', description: ' + (rule.description_pattern || 'any') + ')'\n      }\n    }\n  }];\n}\n\nreturn [{ json: { ...line, rule_hit: false, rule_match: null } }];"
+      },
+      "id": "40d77745-a1f7-431c-b8d4-a5da7b7051c5",
+      "name": "Apply Rules",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3216,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "rule-check",
+              "leftValue": "={{ $json.rule_hit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cde5c20f-21cb-4aed-b1d1-8bbb5e417eb5",
+      "name": "Rule Hit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3472,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH supersede AS (\n  UPDATE bank_recon.proposals\n  SET status = 'superseded', updated_at = now()\n  WHERE statement_line_id = $1\n    AND status = 'proposed'\n),\nnew_proposal AS (\n  INSERT INTO bank_recon.proposals (\n    id, statement_line_id, proposal_type, candidate_kind,\n    candidate_ref, candidate_label, confidence,\n    score_breakdown, decided_by, status\n  ) VALUES (\n    gen_random_uuid(), $1, 'categorisation', 'account',\n    $2, $2, $3,\n    $4::jsonb, 'rules', 'proposed'\n  )\n  RETURNING id\n),\nupdate_status AS (\n  UPDATE bank_recon.statement_lines\n  SET status = 'categorised_proposed', updated_at = now()\n  WHERE statement_line_id = $1\n),\nbump_hit AS (\n  UPDATE bank_recon.categorisation_rules\n  SET hit_count = hit_count + 1, updated_at = now()\n  WHERE id = $5::uuid\n)\nINSERT INTO public.audit_log (\n  workflow_name, workflow_version, workflow_run_id,\n  action_type, target_system, target_record_id,\n  actor, actor_type, status,\n  after_state, retention_until, timestamp_initiated\n)\nVALUES (\n  'xero-bank-reconciliation-engine', '0.1.0', $6,\n  'CATEGORISE_PROPOSED', 'supabase', $1,\n  'rules', 'automation', 'COMPLETED',\n  jsonb_build_object(\n    'statement_line_id', $1,\n    'proposal_id', (SELECT id FROM new_proposal),\n    'candidate_kind', 'account',\n    'candidate_ref', $2,\n    'confidence', $3,\n    'score_breakdown', $4::jsonb,\n    'rule_id', $5,\n    'decided_by', 'rules'\n  ),\n  (now()::date + interval '7 years'),\n  now()\n)\nRETURNING after_state;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.statement_line_id,\n  $json.rule_match.account_code,\n  $json.rule_match.confidence,\n  JSON.stringify($json.rule_match),\n  $json.rule_match.rule_id,\n  $json.run_id\n] }}"
+        }
+      },
+      "id": "51f52767-8570-42e8-aefc-c0ea9e541671",
+      "name": "Write Rule Proposal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3824,
+        1408
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "claude-check",
+              "leftValue": "={{ $json.classify_hit }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "878c6c4c-7856-4b53-9ea2-22d30ea45c32",
+      "name": "Claude Confident?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4512,
+        1712
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH supersede AS (\n  UPDATE bank_recon.proposals\n  SET status = 'superseded', updated_at = now()\n  WHERE statement_line_id = $1\n    AND status = 'proposed'\n),\nnew_proposal AS (\n  INSERT INTO bank_recon.proposals (\n    id, statement_line_id, proposal_type, candidate_kind,\n    candidate_ref, candidate_label, confidence,\n    score_breakdown, decided_by, status\n  ) VALUES (\n    gen_random_uuid(), $1, 'categorisation', 'account',\n    $2, $3, $4,\n    $5::jsonb, 'llm', 'proposed'\n  )\n  RETURNING id\n),\nupdate_status AS (\n  UPDATE bank_recon.statement_lines\n  SET status = 'categorised_proposed', updated_at = now()\n  WHERE statement_line_id = $1\n)\nINSERT INTO public.audit_log (\n  workflow_name, workflow_version, workflow_run_id,\n  action_type, target_system, target_record_id,\n  actor, actor_type, status,\n  after_state, retention_until, timestamp_initiated\n)\nVALUES (\n  'xero-bank-reconciliation-engine', '0.1.0', $6,\n  'CATEGORISE_PROPOSED', 'supabase', $1,\n  'llm', 'automation', 'COMPLETED',\n  jsonb_build_object(\n    'statement_line_id', $1,\n    'proposal_id', (SELECT id FROM new_proposal),\n    'candidate_kind', 'account',\n    'candidate_ref', $2,\n    'candidate_label', $3,\n    'confidence', $4,\n    'score_breakdown', $5::jsonb,\n    'decided_by', 'llm'\n  ),\n  (now()::date + interval '7 years'),\n  now()\n)\nRETURNING after_state;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.statement_line_id,\n  $json.classify_match.account_code,\n  $json.classify_match.account_name || $json.classify_match.account_code,\n  $json.classify_match.confidence,\n  JSON.stringify($json.classify_match),\n  $json.run_id\n] }}"
+        }
+      },
+      "id": "9c873f06-8775-4fc1-829c-ca3d08f521ee",
+      "name": "Write Claude Proposal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4816,
+        1696
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#bank-reconciliation",
+          "cachedResultName": "bank-reconciliation"
+        },
+        "text": "=✅ Reconciliation proposal ready\n{{ $('Split In Batches').item.json.counterparty_text }} · {{ $('Split In Batches').item.json.direction === 'money_in' ? '+' : '-' }}${{ ($('Split In Batches').item.json.amount_minor_units / 100).toFixed(2) }} · {{ $('Split In Batches').item.json.txn_date.split('T')[0] }}\n{{ $json.after_state.candidate_kind === 'account' ? ('Suggested account: ' + ($json.after_state.candidate_label || $json.after_state.candidate_ref)) : ('Matched to ' + $json.after_state.candidate_label + ' (confidence ' + $json.after_state.confidence + ')') }}\nRef: {{ $('Split In Batches').item.json.reference_text || 'none' }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "9bf4c531-2171-4442-9729-5ae09d16deed",
+      "name": "Slack: Proposal Ready",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        5104,
+        1104
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "e67e8cf8-5243-4c99-beb7-3c331e8fa9ca",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH update_status AS (\n  UPDATE bank_recon.statement_lines\n  SET status = 'needs_review', updated_at = now()\n  WHERE statement_line_id = $1\n)\nINSERT INTO public.audit_log (\n  workflow_name, workflow_version, workflow_run_id,\n  action_type, target_system, target_record_id,\n  actor, actor_type, status,\n  after_state, retention_until, timestamp_initiated\n) VALUES (\n  'xero-bank-reconciliation-engine', '0.1.0', $2,\n  'ROUTED_TO_REVIEW', 'supabase', $1,\n  'engine', 'automation', 'COMPLETED',\n  jsonb_build_object('statement_line_id', $1, 'reason', $3),\n  (now()::date + interval '7 years'),\n  now()\n) RETURNING after_state;",
+        "options": {
+          "queryReplacement": "={{ [$json.statement_line_id, $json.run_id, $json.claude_error || 'Low confidence: below threshold'] }}"
+        }
+      },
+      "id": "36b3dcdf-5b49-4f66-b822-4961c399ffd3",
+      "name": "Update Needs Review",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4768,
+        2016
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#bank-reconciliation",
+          "cachedResultName": "bank-reconciliation"
+        },
+        "text": "=⚠️ Needs manual review\n{{ $('Split In Batches').item.json.counterparty_text }} · {{ $('Split In Batches').item.json.direction === 'money_in' ? '+' : '-' }}${{ ($('Split In Batches').item.json.amount_minor_units / 100).toFixed(2) }} · {{ $('Split In Batches').item.json.txn_date.split('T')[0] }}\nRef: {{ $('Split In Batches').item.json.reference_text || 'none' }}\nReason: {{ $json.after_state.reason }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "10b99cf4-d249-422a-8a40-1dfe96d96a6b",
+      "name": "Slack: Exception Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        5040,
+        2016
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "bea50d53-ecc3-4ad5-bb23-72fe6eed5ab9",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "blM8swqMgVe0rXSW",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH run_stats AS (\n  SELECT\n    count(*) FILTER (WHERE action_type = 'MATCH_PROPOSED') AS matches_proposed,\n    count(*) FILTER (WHERE action_type = 'CATEGORISE_PROPOSED') AS categorisations_proposed,\n    count(*) FILTER (WHERE action_type = 'ROUTED_TO_REVIEW') AS routed_to_review\n  FROM public.audit_log\n  WHERE workflow_run_id = $1\n    AND workflow_name = 'xero-bank-reconciliation-engine'\n)\nINSERT INTO public.audit_log (\n  workflow_name, workflow_version, workflow_run_id,\n  action_type, target_system, actor, actor_type,\n  status, after_state, retention_until, timestamp_initiated\n)\nSELECT\n  'xero-bank-reconciliation-engine', '0.1.0', $1,\n  'RUN_COMPLETE', 'supabase', 'engine', 'automation', 'COMPLETED',\n  jsonb_build_object(\n    'trigger_source', $2,\n    'matches_proposed', matches_proposed,\n    'categorisations_proposed', categorisations_proposed,\n    'routed_to_review', routed_to_review,\n    'total_actions', matches_proposed + categorisations_proposed + routed_to_review\n  ),\n  (now()::date + interval '7 years'),\n  now()\nFROM run_stats;",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Set Poll Run Vars').isExecuted ? $('Set Poll Run Vars').first().json.run_id : $('Extract + Set Webhook Vars').first().json.run_id,\n  $('Set Poll Run Vars').isExecuted ? $('Set Poll Run Vars').first().json.trigger_source : 'webhook'\n] }}"
+        }
+      },
+      "id": "68705a64-7bc3-465c-93d0-645dc0535ccc",
+      "name": "Write Run Audit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2384,
+        736
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "gdrive-check",
+              "leftValue": "={{ $('Set Poll Run Vars').isExecuted ? $('Set Poll Run Vars').first().json.trigger_source : 'webhook' }}",
+              "rightValue": "gdrive",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "907a0e12-c6c8-4875-9d44-8f160061e677",
+      "name": "Is GDrive Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        736
+      ],
+      "notes": "Guards the Move node: only fires on GDrive-triggered runs. Webhook runs exit the false branch (unconnected, ends cleanly)."
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('GDrive: New CSV').first().json.id }}"
+        },
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1iA_63eAvvfTNDYpiS2sD7aD6drJ-_dTT",
+          "mode": "list",
+          "cachedResultName": "Bank Reconciliation",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1iA_63eAvvfTNDYpiS2sD7aD6drJ-_dTT"
+        }
+      },
+      "id": "2475b3b7-7ea3-46f8-afa8-e7937fc2c78d",
+      "name": "Move to Processed",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2912,
+        720
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "dJTOAcKVsxB29ZaU",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Replace PLACEHOLDER_PROCESSED_FOLDER_ID with the Google Drive folder ID for bank-statements-processed."
+    },
+    {
+      "parameters": {
+        "content": "## GOOGLE DRIVE PATH (Phase A)\nFile-drop trigger: Google Drive inbox > download CSV > parse > normalize > upsert > eval set.\nCSV columns mapped to canonical fields. Idempotent via pgcrypto line_hash. Processed file moved to archive folder.",
+        "height": 340,
+        "width": 1924
+      },
+      "id": "e563be0a-a436-4496-980b-9acdc54c5ae5",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        16,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## WEBHOOK PATH (Phase D)\nXero webhook > HMAC verify (Crypto node) > IF branch > Respond to Webhook.\nresponseMode=responseNode sends 200 for valid HMAC (incl. ITR), 401 for invalid. Events processed in parallel with the 200 response.",
+        "height": 564,
+        "width": 1668,
+        "color": 2
+      },
+      "id": "76cdd474-0a9d-4a3a-846b-cfa9638333b4",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        16,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## V1: INVOICE/BILL MATCHING (Xero READ-ONLY)\nHard gates: amount tolerance, date window, direction.\nWeighted scoring: reference (0.60) + contact (0.40).\nThresholds from bank_recon.config. Only GET calls to Xero.",
+        "height": 356,
+        "width": 3256,
+        "color": 6
+      },
+      "id": "1b91ead1-8170-45c7-b408-edf6df5af1b8",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## V2: CATEGORISATION CASCADE\nRules engine (priority-ordered, ILIKE patterns) > Claude fallback (PII-redacted, JSON-only) > human review.\nEach level proposes to a human. Nothing auto-clears. Nothing writes to Xero.",
+        "height": 916,
+        "width": 2372,
+        "color": 5
+      },
+      "id": "54795b87-9baa-4ff0-9915-1406f592bceb",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2896,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=You categorise bank transactions for accounting reconciliation. Given a transaction and a chart of accounts, return the single best account_code from the list. The account_code must match exactly one of the codes provided. Set confidence high (0.85+) only when the match is clearly correct; use lower confidence when the transaction is ambiguous or could fit multiple accounts."
+            },
+            {
+              "content": "={{ JSON.stringify({transaction: {date: $json.txn_date, amount_minor_units: $json.amount_minor_units, currency: $json.currency_code, direction: $json.direction, counterparty: $json.counterparty_text, description: $json.description_text, reference: $json.reference_text}, chart_of_accounts: $('Load COA').first().json.coa}) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "schema": "{\n     \"type\": \"object\",\n     \"properties\": {\n       \"account_code\": { \"type\": \"string\", \"description\": \"Account code from the provided chart_of_accounts. Must match exactly.\" },\n       \"account_name\": { \"type\": \"string\" },\n       \"confidence\": { \"type\": \"number\", \"minimum\": 0, \"maximum\": 1 },\n       \"reasoning\": { \"type\": \"string\", \"description\": \"One sentence.\" }\n     },\n     \"additionalProperties\": false,\n     \"required\": [\"account_code\", \"account_name\", \"confidence\", \"reasoning\"]\n   }"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        3664,
+        1728
+      ],
+      "id": "e6a04617-50f5-4c46-bca0-cf8956207446",
+      "name": "Classify",
+      "credentials": {
+        "openAiApi": {
+          "id": "VPM6RqKHPVeIdvtq",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const line = $('Split In Batches').item.json;\nconst result = $input.first().json.message?.content ?? $input.first().json;\n\nconst threshold = parseFloat(line.config.categorisation_threshold);\nconst confident = (result.confidence ?? 0) >= threshold;\n\nreturn [{\n  json: {\n    ...line,\n    classify_hit: confident,\n    classify_match: confident ? {\n      account_code: result.account_code,\n      account_name: result.account_name,\n      confidence: result.confidence,\n      reasoning: result.reasoning\n    } : null\n  }\n}];"
+      },
+      "id": "56cecf0c-88aa-48e7-8686-2afb91684046",
+      "name": "Apply Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        1728
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_agg(jsonb_build_object(\n     'code', code,\n     'name', name,\n     'type', account_type,\n     'description', description\n   ) ORDER BY code) AS coa\n   FROM bank_recon.chart_of_accounts\n   WHERE active = true;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1632,
+        752
+      ],
+      "id": "36f55bc1-a495-45fb-a1eb-0814a26cf476",
+      "name": "Load COA",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "muw5AAZhByttMOgd",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## OUTPUT\n",
+        "height": 304,
+        "width": 1248,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2032,
+        576
+      ],
+      "id": "268fb49d-6c49-4bc6-9c59-54eaceab6ba1",
+      "name": "Sticky Note4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "GDrive: New CSV": {
+      "main": [
+        [
+          {
+            "node": "Set Poll Run Vars",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Poll Run Vars": {
+      "main": [
+        [
+          {
+            "node": "Download CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download CSV": {
+      "main": [
+        [
+          {
+            "node": "Parse CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CSV": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Ordinal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Ordinal": {
+      "main": [
+        [
+          {
+            "node": "Idempotent Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Idempotent Upsert": {
+      "main": [
+        [
+          {
+            "node": "Load COA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Eval Set": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Xero Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify HMAC + ITR Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify HMAC + ITR Guard": {
+      "main": [
+        [
+          {
+            "node": "HMAC Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract + Set Webhook Vars",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract + Set Webhook Vars": {
+      "main": [
+        [
+          {
+            "node": "Load COA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Write Run Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Xero Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Run Audit": {
+      "main": [
+        [
+          {
+            "node": "Is GDrive Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is GDrive Run?": {
+      "main": [
+        [
+          {
+            "node": "Move to Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Xero Candidates": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Match": {
+      "main": [
+        [
+          {
+            "node": "Match Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Found?": {
+      "main": [
+        [
+          {
+            "node": "Write Match Proposal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Cat Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Match Proposal": {
+      "main": [
+        [
+          {
+            "node": "Slack: Proposal Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Cat Rules": {
+      "main": [
+        [
+          {
+            "node": "Apply Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Rules": {
+      "main": [
+        [
+          {
+            "node": "Rule Hit?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rule Hit?": {
+      "main": [
+        [
+          {
+            "node": "Write Rule Proposal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Rule Proposal": {
+      "main": [
+        [
+          {
+            "node": "Slack: Proposal Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Confident?": {
+      "main": [
+        [
+          {
+            "node": "Write Claude Proposal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Claude Proposal": {
+      "main": [
+        [
+          {
+            "node": "Slack: Proposal Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Proposal Ready": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Slack: Exception Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Exception Alert": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify": {
+      "main": [
+        [
+          {
+            "node": "Apply Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Classification": {
+      "main": [
+        [
+          {
+            "node": "Claude Confident?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load COA": {
+      "main": [
+        [
+          {
+            "node": "Select Eval Set",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "43e36209-8f1f-4a03-b43c-4fa4882b466f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "72c3d5eade149732e79aa067dee10628a0bb24f4014564f69fdde16261b2441f"
+  },
+  "id": "ap3XV9HzCbz9nEWC",
+  "tags": []
+}
