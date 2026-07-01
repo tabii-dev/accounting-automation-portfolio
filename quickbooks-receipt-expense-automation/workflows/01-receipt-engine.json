@@ -1,0 +1,2378 @@
+{
+  "name": "Project 5 — Receipt & Expense Substantiation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Two intakes, one pipeline\nTelegram photo (1 photo = 1 receipt) and Gmail forwarded receipts (each attachment, and each PDF page, becomes its own candidate). Both normalise to a common candidate shape then converge at Init Run.\n\nPDF page-split uses the PURE n8n text layer (Read PDF Text + Split PDF Pages). A scanned/image-only PDF has no text layer, extracts empty, and is routed to REVIEW (LOW_CONFIDENCE) downstream. That is the safe, honest outcome.",
+        "height": 664,
+        "width": 1928
+      },
+      "id": "c259aa33-9c9f-44a3-9d66-a74de60b1a46",
+      "name": "Sticky Intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -6800,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Vision Extract (isolated)\nSingle OpenAI call. Accepts an image (Telegram + image attachments) OR PDF page text, via the openai_user_content built at intake. Returns strict JSON with per-field confidence. Tune the confidence threshold in Validate. Iterate this node in isolation by pinning the loop item.",
+        "height": 800,
+        "width": 2192,
+        "color": 6
+      },
+      "id": "d04fea0c-1fbb-46bc-b94f-32ab5e1ccf83",
+      "name": "Sticky Vision Extract",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4848,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Match Engine (isolated, the differentiator)\nClient-side filters PaymentType in CreditCard/Cash and a line coded to a holding account (Uncategorized Expense / Ask My Accountant). Two hard gates: date [d-1, d+5], amount [total-0.02, total*1.25] (upper band absorbs a tip). Weighted score over qualifiers. Test by pinning Fetch Candidate Txns output.",
+        "height": 872,
+        "width": 1908,
+        "color": 5
+      },
+      "id": "52824568-c33f-4cec-80a4-bd376fae12b5",
+      "name": "Sticky Match Engine",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2592,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Posting and idempotency\nMATCHED: upload Attachable + recode the matched Purchase line off the holding account. NO_MATCH: create a standalone Purchase flagged pending bank match (Accounting API cannot pre-link a not-yet-downloaded feed line; reconcile manually in QBO).\n\nIdempotency backstop: the partial unique index on (vendor_norm, receipt_date, total_minor) WHERE status='POSTED' rejects a duplicate POST. A conflict here routes to Mark FAILED (IDEMPOTENCY_CONFLICT) for a human, not a silent skip, because QBO work already happened.\n\nFLAGS before any real post: replace category_rules PENDING ids with Craig real account ids, set the standalone paid-from AccountRef (PENDING_BANK_ACCOUNT placeholder), and verify the QBO upload multipart part headers on first live run.",
+        "height": 672,
+        "width": 2552,
+        "color": 4
+      },
+      "id": "a862be29-5984-466e-9d89-f1c9ae26a543",
+      "name": "Sticky Post",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -624,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Error handling\nExternal nodes retry 3x then route their error output to Mark FAILED (per-candidate FAILED terminal, no silent failures). The Split In Batches loop isolates one bad candidate from the rest of the run. Set the workflow Error Workflow to the real WF99 id (placeholder in settings) before activating.",
+        "height": 356,
+        "width": 632,
+        "color": 3
+      },
+      "id": "3b007b5e-3f14-4d61-9540-84f7085f400e",
+      "name": "Sticky WF99",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        432,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "23bd22b7-d56c-45bb-8c36-caecb5d0eca3",
+      "name": "Telegram Receipt Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -6768,
+        240
+      ],
+      "webhookId": "74ab0c30-6d2b-4860-9607-c18a485447f8",
+      "credentials": {
+        "telegramApi": {
+          "id": "izrsyFYUXYhzNCJf",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.message.photo[$json.message.photo.length - 1].file_id }}",
+        "additionalFields": {}
+      },
+      "id": "cca9ffce-0b46-4dc1-a36d-5e6eb8a0360f",
+      "name": "Telegram Get File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -6544,
+        240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "88c6ddf4-1e99-42c8-a8db-66d836d2fa27",
+      "credentials": {
+        "telegramApi": {
+          "id": "izrsyFYUXYhzNCJf",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst b64 = buf.toString('base64');\nconst srcBin = (item.binary && item.binary.data) ? item.binary.data : null;\nconst mime = (srcBin && srcBin.mimeType) ? srcBin.mimeType : 'image/jpeg';\n\nlet msgId = 'unknown';\ntry { msgId = $('Telegram Receipt Trigger').item.json.message.message_id ?? 'unknown'; } catch (e) {}\n\nreturn {\n  json: {\n    intake_channel: 'telegram',\n    source_ref: 'tg:' + msgId,\n    openai_user_content: [\n      { type: 'text', text: 'Extract the receipt fields as JSON.' },\n      { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b64 } }\n    ]\n  },\n  binary: srcBin ? { receipt_file: srcBin } : {}\n};"
+      },
+      "id": "85e03846-7e9f-4376-b6d5-bd858a9afa05",
+      "name": "Normalise Telegram Intake",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6320,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "has:attachment",
+          "readStatus": "unread"
+        },
+        "options": {
+          "dataPropertyAttachmentsPrefixName": "attachment_",
+          "downloadAttachments": true
+        }
+      },
+      "id": "4e6b9135-d125-4d54-999d-0341c2b22748",
+      "name": "Gmail Receipt Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -6768,
+        464
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "rcIsKfWoMaFVWPf8",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per email attachment, binary standardised to source_file.\nconst out = [];\nfor (const item of $input.all()) {\n  try {\n    const j = item.json || {};\n    const bins = item.binary || {};\n    const messageId = j.id || j.messageId || (j.headers && j.headers['message-id']) || 'unknown';\n    let idx = 0;\n    for (const key of Object.keys(bins)) {\n      if (key.indexOf('attachment_') !== 0) continue;\n      const b = bins[key];\n      out.push({\n        json: {\n          messageId: String(messageId),\n          attachment_index: idx,\n          filename: b.fileName || ('attachment_' + idx),\n          mimeType: b.mimeType || 'application/octet-stream'\n        },\n        binary: { source_file: b }\n      });\n      idx++;\n    }\n  } catch (e) {\n    throw new Error('Split Email Attachments failed: ' + e.message);\n  }\n}\nreturn out;"
+      },
+      "id": "3c14e466-8417-4ab4-adaf-dacde9fb5bbb",
+      "name": "Split Email Attachments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6544,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c_pdf",
+              "leftValue": "={{ $json.mimeType }}",
+              "rightValue": "pdf",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "779f432d-5742-416f-a52b-26377a35ba45",
+      "name": "Is PDF Attachment",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -6320,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "source_file"
+      },
+      "id": "718e85a7-3cf4-43f8-a2d2-6b5d378faaa8",
+      "name": "Read PDF Text",
+      "type": "n8n-nodes-base.readPDF",
+      "typeVersion": 1,
+      "position": [
+        -6096,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Run Once for All Items.\n// One candidate per PDF page using the text layer. Pages split on form-feed.\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  const text = j.text || '';\n  const srcBin = (item.binary && item.binary.source_file) ? item.binary.source_file : null;\n\n  let pages = text.split('\\f').map(p => p.trim()).filter(p => p.length > 0);\n  if (pages.length === 0) pages = [''];\n\n  pages.forEach((p, i) => {\n    out.push({\n      json: {\n        messageId: j.messageId ?? null,\n        attachment_index: j.attachment_index ?? 0,\n        page_index: i,\n        page_text: p,\n        filename: j.filename ?? null,\n        mimeType: 'application/pdf'\n      },\n      binary: srcBin ? { source_file: srcBin } : {}\n    });\n  });\n}\nreturn out;"
+      },
+      "id": "5406dbad-e980-4f38-b7ac-5389ede104f3",
+      "name": "Split PDF Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5888,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Normalise an image attachment OR a PDF page into the common candidate shape.\ntry {\n  const j = $json;\n  const isPdf = (j.page_text !== undefined) || (j.mimeType === 'application/pdf');\n  const messageId = j.messageId || 'unknown';\n  const attIdx = (j.attachment_index !== undefined) ? j.attachment_index : 0;\n  const pageIdx = (j.page_index !== undefined) ? j.page_index : 0;\n  const sourceRef = 'em:' + messageId + ':att' + attIdx + ':page' + pageIdx;\n  const bin = ($binary && $binary.source_file) ? $binary.source_file : null;\n  let candidateKind, userContent, mime;\n  if (isPdf) {\n    candidateKind = 'pdf_text';\n    mime = 'application/pdf';\n    const pageText = j.page_text || '';\n    userContent = [ { type: 'text', text: 'Extract the receipt fields as JSON from this receipt text:\\n' + pageText } ];\n  } else {\n    candidateKind = 'image';\n    mime = j.mimeType || (bin && bin.mimeType) || 'image/jpeg';\n    if (!bin) { throw new Error('Email image binary missing on property source_file'); }\n    const dataUri = 'data:' + mime + ';base64,' + bin.data;\n    userContent = [ { type: 'text', text: 'Extract the receipt fields as JSON.' }, { type: 'image_url', image_url: { url: dataUri } } ];\n  }\n  return {\n    json: {\n      intake_channel: 'email',\n      source_ref: sourceRef,\n      candidate_kind: candidateKind,\n      mime_type: mime,\n      openai_user_content: userContent\n    },\n    binary: bin ? { receipt_file: bin } : {}\n  };\n} catch (e) {\n  throw new Error('Normalise Email Intake failed: ' + e.message);\n}"
+      },
+      "id": "abc113d1-8a8e-44ad-a3d6-4f1edf87dfbd",
+      "name": "Normalise Email Intake",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6096,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate one v4 workflow_run_id per execution (Math.random, never $execution.id, never $crypto).\nfunction uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {\n    var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\nconst runId = uuidv4();\nreturn $input.all().map(function (it) {\n  return { json: Object.assign({}, it.json, { workflow_run_id: runId }), binary: it.binary };\n});"
+      },
+      "id": "eb811c59-5d63-4a68-b171-bd09fc135fbf",
+      "name": "Init Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5664,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "18122233-284c-4851-a83f-c841ac793b1d",
+      "name": "Per-Candidate Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -5440,
+        368
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "02291dc3-2d9f-4f31-870a-4ff929ee0d95",
+      "name": "Run Complete",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -5440,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipts (workflow_run_id, intake_channel, source_ref, status, image_storage_ref) VALUES ($1, $2, $3, 'PENDING', $4) RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.workflow_run_id, $json.intake_channel, $json.source_ref, $json.source_ref ] }}"
+        }
+      },
+      "id": "0ccf9621-f9ef-487a-9953-a37dace1c722",
+      "name": "Create Receipt Row",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -5216,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'RECEIVED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ intake_channel: $('Per-Candidate Loop').item.json.intake_channel, source_ref: $('Per-Candidate Loop').item.json.source_ref, candidate_kind: $('Per-Candidate Loop').item.json.candidate_kind }) ] }}"
+        }
+      },
+      "id": "470dfdc4-9c9b-4d13-8a7a-93619e16fb71",
+      "name": "Log RECEIVED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -5008,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o', max_tokens: 1500, temperature: 0, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are a receipts data extraction engine. Return ONLY a JSON object with keys: vendor (string), date as YYYY-MM-DD string, currency_code as 3 letter ISO, total (number), tax (number), payment_method (string with all but the last 4 digits masked), line_items (array of objects with description and amount), field_confidence (object mapping vendor, date, currency_code, total, tax each to a number from 0 to 1), and overall_confidence (number from 0 to 1). If a field is unreadable use null and confidence 0.' }, { role: 'user', content: $('Per-Candidate Loop').item.json.openai_user_content } ] }) }}",
+        "options": {}
+      },
+      "id": "db560b05-c19a-472d-98bc-dcdb2b916510",
+      "name": "Vision Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -4784,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "openAiApi": {
+          "id": "3ktiVlwFEiqSjrZt",
+          "name": "OpenAI account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse the vision JSON, mask card digits (regex, not hashing), type fields, amounts to integer minor units, compute vendor_norm and is_foreign_currency, and prebuild the QBO query window.\ntry {\n  const raw = ($json.choices && $json.choices[0] && $json.choices[0].message) ? $json.choices[0].message.content : '{}';\n  let ex;\n  try { ex = JSON.parse(raw); } catch (_) { ex = {}; }\n  const mask = function (s) {\n    if (s === null || s === undefined) return s;\n    return String(s).replace(/(?:\\d[ -]*?){12,19}/g, function (m) { const d = m.replace(/\\D/g, ''); return '*'.repeat(Math.max(0, d.length - 4)) + d.slice(-4); });\n  };\n  const toMinor = function (v) { if (v === null || v === undefined || v === '') return null; const n = Math.round(Number(v) * 100); return Number.isFinite(n) ? n : null; };\n  const vendorRaw = ex.vendor ? mask(ex.vendor) : null;\n  const vendorNorm = vendorRaw ? String(vendorRaw).toLowerCase().replace(/[^a-z0-9]/g, '') : null;\n  const currency = (ex.currency_code || 'USD').toString().toUpperCase().slice(0, 3);\n  let qboQuery = null;\n  if (ex.date) {\n    const base = new Date(ex.date + 'T00:00:00Z');\n    if (!isNaN(base.getTime())) {\n      const s = new Date(base.getTime() - 1 * 86400000).toISOString().slice(0, 10);\n      const e = new Date(base.getTime() + 5 * 86400000).toISOString().slice(0, 10);\n      qboQuery = \"select * from Purchase where TxnDate >= '\" + s + \"' and TxnDate <= '\" + e + \"' maxresults 200\";\n    }\n  }\n  return {\n    json: {\n      vendor_raw: vendorRaw,\n      vendor_norm: vendorNorm,\n      receipt_date: ex.date || null,\n      currency_code: currency,\n      is_foreign_currency: currency !== 'USD',\n      total_minor: toMinor(ex.total),\n      tax_minor: toMinor(ex.tax),\n      line_items_json: Array.isArray(ex.line_items) ? ex.line_items : [],\n      payment_method_masked: ex.payment_method ? mask(ex.payment_method) : null,\n      extraction_confidence: (ex.overall_confidence !== undefined && ex.overall_confidence !== null) ? Number(ex.overall_confidence) : null,\n      field_confidence_json: ex.field_confidence || {},\n      qbo_query: qboQuery\n    }\n  };\n} catch (e) {\n  throw new Error('Normalise & Mask Extraction failed: ' + e.message);\n}"
+      },
+      "id": "6a102b8f-e8b2-4f8c-9272-e0954c7feb5d",
+      "name": "Normalise & Mask Extraction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4560,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE receipt_expense.receipts SET status='EXTRACTED', vendor_raw=$2, vendor_norm=$3, receipt_date=$4, currency_code=$5, is_foreign_currency=$6, total_minor=$7, tax_minor=$8, line_items_json=$9::jsonb, payment_method_masked=$10, extraction_confidence=$11, field_confidence_json=$12::jsonb, updated_at=now() WHERE id=$1;",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $json.vendor_raw, $json.vendor_norm, $json.receipt_date, $json.currency_code, $json.is_foreign_currency, $json.total_minor, $json.tax_minor, JSON.stringify($json.line_items_json), $json.payment_method_masked, $json.extraction_confidence, JSON.stringify($json.field_confidence_json) ] }}"
+        }
+      },
+      "id": "860c5260-6d83-4128-ac15-8e0088c035f0",
+      "name": "Update Receipt EXTRACTED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -4336,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'EXTRACTED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ extraction_confidence: $('Normalise & Mask Extraction').item.json.extraction_confidence, currency_code: $('Normalise & Mask Extraction').item.json.currency_code, is_foreign_currency: $('Normalise & Mask Extraction').item.json.is_foreign_currency }) ] }}"
+        }
+      },
+      "id": "321d2f20-4027-48e1-a162-9e27e0cf57d1",
+      "name": "Log EXTRACTED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -4128,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Line items + tax reconcile to total within 2 cents (integer minor units), date sanity, confidence threshold. Precompute the review reason and detail; foreign currency takes precedence.\ntry {\n  const r = $('Normalise & Mask Extraction').item.json;\n  const reasons = [];\n  let passed = true;\n  const items = Array.isArray(r.line_items_json) ? r.line_items_json : [];\n  const sumItems = items.reduce(function (a, li) { const c = Math.round(Number(li.amount) * 100); return a + (Number.isFinite(c) ? c : 0); }, 0);\n  const tax = r.tax_minor || 0;\n  const total = r.total_minor;\n  if (total === null || total === undefined) { passed = false; reasons.push('missing_total'); }\n  let reconcileOk = true;\n  if (total !== null && total !== undefined && items.length > 0) {\n    reconcileOk = Math.abs((sumItems + tax) - total) <= 2;\n    if (!reconcileOk) { passed = false; reasons.push('line_items_do_not_reconcile'); }\n  }\n  const now = Date.now();\n  if (!r.receipt_date) { passed = false; reasons.push('missing_date'); }\n  else {\n    const d = new Date(r.receipt_date + 'T00:00:00Z').getTime();\n    if (isNaN(d)) { passed = false; reasons.push('unparseable_date'); }\n    else {\n      if (d > now + 86400000) { passed = false; reasons.push('future_date'); }\n      if (now - d > 3650 * 86400000) { passed = false; reasons.push('too_old'); }\n    }\n  }\n  const CONF_THRESHOLD = 0.70;\n  const conf = (r.extraction_confidence === null || r.extraction_confidence === undefined) ? 0 : Number(r.extraction_confidence);\n  const lowConf = conf < CONF_THRESHOLD;\n  let needsReview = false; let reviewReason = null;\n  if (r.is_foreign_currency) { needsReview = true; reviewReason = 'FOREIGN_CURRENCY'; }\n  else if (!passed) { needsReview = true; reviewReason = 'VALIDATION_FAILED'; }\n  else if (lowConf) { needsReview = true; reviewReason = 'LOW_CONFIDENCE_EXTRACTION'; }\n  return {\n    json: {\n      validation_passed: passed,\n      failed_check: passed ? null : reasons.join(','),\n      needs_review: needsReview,\n      review_reason: reviewReason,\n      review_detail: { reasons: reasons, sum_items_minor: sumItems, tax_minor: tax, total_minor: total, reconcile_ok: reconcileOk, extraction_confidence: conf, is_foreign_currency: r.is_foreign_currency, currency_code: r.currency_code }\n    }\n  };\n} catch (e) {\n  throw new Error('Validate failed: ' + e.message);\n}"
+      },
+      "id": "d41e5ac0-846f-495f-8b07-927b4ac63ef2",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3904,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c_needs_review",
+              "leftValue": "={{ $json.needs_review }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fb464c75-f444-4d33-9216-996627feb15c",
+      "name": "Validation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3680,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'VALIDATED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ validation_passed: true }) ] }}"
+        }
+      },
+      "id": "41f2745a-0747-424a-a388-db663a5c92dd",
+      "name": "Log VALIDATED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -3456,
+        464
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT EXISTS(SELECT 1 FROM receipt_expense.receipts WHERE vendor_norm=$1 AND receipt_date=$2 AND total_minor=$3 AND status='POSTED') AS is_dup;",
+        "options": {
+          "queryReplacement": "={{ [ $('Normalise & Mask Extraction').item.json.vendor_norm, $('Normalise & Mask Extraction').item.json.receipt_date, $('Normalise & Mask Extraction').item.json.total_minor ] }}"
+        }
+      },
+      "id": "e44f8cf7-e381-4dae-addb-97e7bded4a24",
+      "name": "Dedupe Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -3248,
+        464
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c_is_dup",
+              "leftValue": "={{ $json.is_dup }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "827427f3-d906-49b5-856d-a52b126f015d",
+      "name": "Dedupe Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3024,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE receipt_expense.receipts SET status='SKIPPED_DUPLICATE', updated_at=now() WHERE id=$1;",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id ] }}"
+        }
+      },
+      "id": "05f5d309-cd15-496a-8bc7-e3d180801429",
+      "name": "Update SKIPPED_DUPLICATE",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -3024,
+        672
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'DUPLICATE_DETECTED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ vendor_norm: $('Normalise & Mask Extraction').item.json.vendor_norm, receipt_date: $('Normalise & Mask Extraction').item.json.receipt_date, total_minor: $('Normalise & Mask Extraction').item.json.total_minor }) ] }}"
+        }
+      },
+      "id": "63990a0a-6183-44fb-8aa3-b678fe4774c8",
+      "name": "Log DUPLICATE_DETECTED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2800,
+        672
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/query?minorversion=65&query={{ encodeURIComponent($('Normalise & Mask Extraction').item.json.qbo_query) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "432a1862-8e63-4991-bbaf-ab87062ecac4",
+      "name": "Fetch Candidate Txns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -2800,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "WBXnXEXVxJCxZA0G",
+          "name": "QuickBooks Online account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Match Engine: client-side filter (PaymentType, holding account), two hard gates (date, amount), weighted score over qualifiers.\ntry {\n  const r = $('Normalise & Mask Extraction').item.json;\n  const resp = ($json && $json.QueryResponse) ? $json.QueryResponse : {};\n  const purchases = Array.isArray(resp.Purchase) ? resp.Purchase : [];\n  const HOLDING = ['uncategorized expense', 'uncategorised expense', 'ask my accountant'];\n  const receiptDate = r.receipt_date ? new Date(r.receipt_date + 'T00:00:00Z').getTime() : null;\n  const totalMinor = r.total_minor;\n  const norm = function (s) { return (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, ''); };\n  const vendorNorm = r.vendor_norm || '';\n  const sim = function (a, b) { a = norm(a); b = norm(b); if (!a || !b) return 0; if (a === b) return 1; const short = a.length < b.length ? a : b; const long = a.length < b.length ? b : a; return long.indexOf(short) >= 0 ? short.length / long.length : 0; };\n  const dayMs = 86400000;\n  const qualifiers = [];\n  for (const p of purchases) {\n    const pt = (p.PaymentType || '').toString();\n    if (pt !== 'CreditCard' && pt !== 'Cash') continue;\n    const lines = Array.isArray(p.Line) ? p.Line : [];\n    const holdingLine = lines.find(function (l) { return l.AccountBasedExpenseLineDetail && l.AccountBasedExpenseLineDetail.AccountRef && HOLDING.indexOf((l.AccountBasedExpenseLineDetail.AccountRef.name || '').toLowerCase()) >= 0; });\n    if (!holdingLine) continue;\n    const td = p.TxnDate ? new Date(p.TxnDate + 'T00:00:00Z').getTime() : null;\n    if (td === null || receiptDate === null) continue;\n    if (td < receiptDate - 1 * dayMs || td > receiptDate + 5 * dayMs) continue;\n    const cand = Math.round(Number(p.TotalAmt) * 100);\n    if (!Number.isFinite(cand) || totalMinor === null || totalMinor === undefined) continue;\n    if (cand < totalMinor - 2) continue;\n    if (cand > Math.round(totalMinor * 1.25)) continue;\n    const amountExact = Math.abs(cand - totalMinor) <= 2;\n    const amountScore = amountExact ? 1.0 : 0.5;\n    const vendorScore = sim(vendorNorm, (p.EntityRef && p.EntityRef.name) || p.PrivateNote || '');\n    const dayDiff = Math.abs(td - receiptDate) / dayMs;\n    const dateScore = Math.max(0, 1 - (dayDiff / 6));\n    const score = 0.55 * amountScore + 0.25 * vendorScore + 0.20 * dateScore;\n    qualifiers.push({ id: p.Id, syncToken: p.SyncToken, txn: p, amountExact: amountExact, amountScore: amountScore, vendorScore: vendorScore, dateScore: dateScore, score: score });\n  }\n  qualifiers.sort(function (a, b) { return b.score - a.score; });\n  let decision = 'NO_MATCH', matchedId = null, matchScore = null, matchedTxn = null, reviewReason = null, reviewDetail = null;\n  if (qualifiers.length > 0) {\n    const top = qualifiers[0];\n    const second = qualifiers[1];\n    const strongVendor = top.vendorScore >= 0.6;\n    const tightDate = top.dateScore >= 0.66;\n    const several = second && (top.score - second.score) < 0.1;\n    if (top.amountExact && strongVendor && tightDate && !several) {\n      decision = 'MATCHED'; matchedId = top.id; matchScore = top.score; matchedTxn = top.txn;\n    } else {\n      decision = 'AMBIGUOUS'; matchedId = top.id; matchScore = top.score; matchedTxn = top.txn; reviewReason = 'AMBIGUOUS_MATCH';\n      reviewDetail = { topScore: top.score, candidates: qualifiers.slice(0, 3).map(function (q) { return { id: q.id, score: q.score, amountExact: q.amountExact, vendorScore: q.vendorScore, dateScore: q.dateScore }; }) };\n    }\n  }\n  const matchBasis = { qualifier_count: qualifiers.length, decision: decision, top: qualifiers[0] ? { id: qualifiers[0].id, score: qualifiers[0].score, amount_score: qualifiers[0].amountScore, vendor_score: qualifiers[0].vendorScore, date_score: qualifiers[0].dateScore } : null };\n  return {\n    json: {\n      match_decision: decision,\n      match_status: decision === 'MATCHED' ? 'MATCHED' : (decision === 'AMBIGUOUS' ? 'REVIEW' : 'NO_MATCH'),\n      matched_txn_id: matchedId,\n      match_score: matchScore,\n      match_basis_json: matchBasis,\n      matched_txn: matchedTxn,\n      review_reason: reviewReason,\n      review_detail: reviewDetail\n    }\n  };\n} catch (e) {\n  throw new Error('Match Engine failed: ' + e.message);\n}"
+      },
+      "id": "10003303-d5cd-40d7-9b18-ed3aaecb9db4",
+      "name": "Match Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2576,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c_amb",
+              "leftValue": "={{ $json.match_decision }}",
+              "rightValue": "AMBIGUOUS",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b95734f6-806f-4d55-9da3-cd8672266a31",
+      "name": "Is Ambiguous Match",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2368,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, $3, $4::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, ($('Match Engine').item.json.match_decision === 'MATCHED' ? 'MATCHED' : 'NO_MATCH'), JSON.stringify($('Match Engine').item.json.match_basis_json) ] }}"
+        }
+      },
+      "id": "eb6a7a24-6ac2-4990-875c-a62deec0df20",
+      "name": "Log Match Result",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2144,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rule.qbo_account_id AS rule_account_id, rule.qbo_account_name AS rule_account_name, rule.priority AS rule_priority FROM (VALUES (1)) AS d(x) LEFT JOIN LATERAL (SELECT qbo_account_id, qbo_account_name, priority FROM receipt_expense.category_rules WHERE active = true AND ((match_type = 'vendor_pattern' AND $1 ILIKE vendor_pattern) OR (match_type = 'amount_range' AND $2 BETWEEN COALESCE(amount_min_minor, -1) AND COALESCE(amount_max_minor, 9223372036854775807)) OR (match_type = 'vendor_and_amount' AND $1 ILIKE vendor_pattern AND $2 BETWEEN COALESCE(amount_min_minor, -1) AND COALESCE(amount_max_minor, 9223372036854775807))) ORDER BY priority ASC LIMIT 1) rule ON true;",
+        "options": {
+          "queryReplacement": "={{ [ $('Normalise & Mask Extraction').item.json.vendor_raw, $('Normalise & Mask Extraction').item.json.total_minor ] }}"
+        }
+      },
+      "id": "b1041180-83d5-4757-8865-770083dce907",
+      "name": "Rules Engine",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1920,
+        368
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c_rule",
+              "leftValue": "={{ $json.rule_account_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0ac779a3-a246-4363-be36-89821823d141",
+      "name": "Rule Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1696,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "category_account",
+              "type": "string",
+              "value": "={{ $('Rules Engine').item.json.rule_account_id }}"
+            },
+            {
+              "id": "s2",
+              "name": "category_source",
+              "type": "string",
+              "value": "RULE"
+            },
+            {
+              "id": "s3",
+              "name": "category_confidence",
+              "type": "number",
+              "value": 1
+            },
+            {
+              "id": "s4",
+              "name": "needs_category_review",
+              "type": "boolean",
+              "value": "={{ $('Rules Engine').item.json.rule_account_id === 'PENDING' }}"
+            },
+            {
+              "id": "s5",
+              "name": "review_reason",
+              "type": "string",
+              "value": "AMBIGUOUS_CATEGORY"
+            },
+            {
+              "id": "s6",
+              "name": "review_detail",
+              "type": "object",
+              "value": "={{ { source: 'RULE', account_name: $('Rules Engine').item.json.rule_account_name, account_id: $('Rules Engine').item.json.rule_account_id, note: 'rule maps to PENDING placeholder; needs Craig real account id before posting' } }}"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "ad4a31f1-9035-4de1-979f-c0be332a3210",
+      "name": "Set Category from Rule",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1376,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'gpt-4o-mini',\n  max_tokens: 300,\n  temperature: 0,\n  response_format: { type: 'json_object' },\n  messages: [\n    {\n      role: 'system',\n      content: 'You are a bookkeeping categorisation assistant for a small construction and landscaping business. Choose the single best expense account for this receipt from ONLY the list below. Return ONLY a JSON object with keys: account_id (string, must be exactly one of the ids below), account_name (the matching name from the list), and confidence (number from 0 to 1). If none fit well, return account_id \"31\" with account_name \"Uncategorized Expense\" and a low confidence. Accounts: 55 Automobile; 56 Automobile:Fuel; 63 Job Expenses:Job Materials; 66 Job Expenses:Job Materials:Plants and Soil; 62 Job Expenses:Equipment Rental; 72 Maintenance and Repair; 13 Meals and Entertainment; 15 Office Expenses; 20 Supplies; 24 Utilities; 31 Uncategorized Expense.'\n    },\n    {\n      role: 'user',\n      content: 'Vendor: ' + ($('Normalise & Mask Extraction').item.json.vendor_raw || '') + '. Total USD: ' + (($('Normalise & Mask Extraction').item.json.total_minor || 0) / 100) + '. Line items: ' + JSON.stringify($('Normalise & Mask Extraction').item.json.line_items_json)\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "id": "3509388a-f2b3-4760-9eea-92a54838f7cf",
+      "name": "OpenAI Categorise",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1488,
+        480
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "openAiApi": {
+          "id": "3ktiVlwFEiqSjrZt",
+          "name": "OpenAI account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse the AI categorisation. Enforce a numeric account id; anything else, or low confidence, routes to review.\ntry {\n  const raw = ($json.choices && $json.choices[0] && $json.choices[0].message) ? $json.choices[0].message.content : '{}';\n  let c;\n  try { c = JSON.parse(raw); } catch (_) { c = {}; }\n\n  const THR = 0.70;\n  const conf = (c.confidence === undefined || c.confidence === null) ? 0 : Number(c.confidence);\n\n  const rawId = (c.account_id !== undefined && c.account_id !== null) ? String(c.account_id) : null;\n  const validId = (rawId && /^[0-9]+$/.test(rawId)) ? rawId : null;\n  const account = validId;                       // only ever a numeric id, or null\n\n  const needsReview = (conf < THR) || (account === null);\n\n  return {\n    json: {\n      category_account: account,\n      category_source: 'AI',\n      category_confidence: conf,\n      needs_category_review: needsReview,\n      review_reason: 'AMBIGUOUS_CATEGORY',\n      review_detail: { source: 'AI', suggested: c, confidence: conf }\n    }\n  };\n} catch (e) {\n  throw new Error('Parse Category failed: ' + e.message);\n}"
+      },
+      "id": "9a0d4b16-1b13-4dd8-a946-6d0ba0cb14c7",
+      "name": "Parse Category",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1264,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c_cat_review",
+              "leftValue": "={{ $json.needs_category_review }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f50cee98-c24e-4e02-887c-ba36a8fc9b53",
+      "name": "Category Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1040,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c_matched",
+              "leftValue": "={{ $('Match Engine').item.json.match_decision }}",
+              "rightValue": "MATCHED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b4f2366d-930d-43d4-9405-2f0d91a37263",
+      "name": "Is Matched",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -816,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n  const lb = $('Per-Candidate Loop').item;\n  const bin = (lb && lb.binary && lb.binary.receipt_file) ? lb.binary.receipt_file : null;\n  const mime = (bin && bin.mimeType) ? bin.mimeType : 'application/pdf';\n  const ext = mime.indexOf('pdf') >= 0 ? 'pdf' : (mime.indexOf('png') >= 0 ? 'png' : 'jpg');\n  return {\n    json: {\n      category_account: $json.category_account,\n      category_source: $json.category_source,\n      category_confidence: $json.category_confidence,\n      filename: 'receipt.' + ext,\n      mimeType: mime\n    },\n    binary: bin ? { receipt_file: bin } : {}\n  };\n} catch (e) {\n  throw new Error('Prepare Attachment Binary failed: ' + e.message);\n}"
+      },
+      "id": "9c331492-363b-4868-aa3f-ee2afe66da4e",
+      "name": "Prepare Attachment Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/upload?minorversion=65",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file_content_0",
+              "inputDataFieldName": "receipt_file"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file_metadata_0",
+              "inputDataFieldName": "meta_json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f4a8a293-6e31-44eb-a0d9-5479d55e6421",
+      "name": "Attach Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -176,
+        240
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "WBXnXEXVxJCxZA0G",
+          "name": "QuickBooks Online account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/purchase?minorversion=65",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  sparse: true,\n  Id: $('Refetch Purchase').item.json.Purchase.Id,\n  SyncToken: $('Refetch Purchase').item.json.Purchase.SyncToken,\n  PaymentType: $('Refetch Purchase').item.json.Purchase.PaymentType,\n  AccountRef: $('Refetch Purchase').item.json.Purchase.AccountRef,\n  Line: ($('Refetch Purchase').item.json.Purchase.Line || []).map(function (l) {\n    return l.AccountBasedExpenseLineDetail\n      ? Object.assign({}, l, { AccountBasedExpenseLineDetail: Object.assign({}, l.AccountBasedExpenseLineDetail, { AccountRef: { value: $('Prepare Attachment Binary').item.json.category_account } }) })\n      : l;\n  })\n}) }}",
+        "options": {}
+      },
+      "id": "c3ab7768-8136-43de-a642-894fcba13577",
+      "name": "Recode Purchase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        288,
+        208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "WBXnXEXVxJCxZA0G",
+          "name": "QuickBooks Online account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/purchase?minorversion=65",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign(\n  {\n    PaymentType: 'CreditCard',\n    AccountRef: { value: '42' },\n    TxnDate: ($('Normalise & Mask Extraction').item.json.receipt_date || undefined),\n    Line: [ {\n      Amount: (($('Normalise & Mask Extraction').item.json.total_minor || 0) / 100),\n      DetailType: 'AccountBasedExpenseLineDetail',\n      AccountBasedExpenseLineDetail: { AccountRef: { value: $json.category_account } }\n    } ],\n    PrivateNote: 'Receipt-originated expense, pending bank feed match. Created by n8n receipt engine.'\n  },\n  ($json.matched_vendor_id ? { EntityRef: { value: $json.matched_vendor_id } } : {})\n)) }}",
+        "options": {}
+      },
+      "id": "79ce4b9a-8b3b-4dda-bb98-b2784e1867a7",
+      "name": "Post Standalone Expense",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -32,
+        464
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "WBXnXEXVxJCxZA0G",
+          "name": "QuickBooks Online account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Converge the matched and no-match post branches; extract QBO ids without referencing an un-run node.\ntry {\n  const dec = $('Match Engine').item.json.match_decision;\n  let purchaseId = null, attachableId = null;\n  if (dec === 'MATCHED') {\n    purchaseId = $('Match Engine').item.json.matched_txn_id;\n    const ar = $('Attach Receipt').item.json.AttachableResponse;\n    attachableId = (ar && ar[0] && ar[0].Attachable) ? ar[0].Attachable.Id : null;\n  } else {\n    purchaseId = ($json.Purchase && $json.Purchase.Id) ? $json.Purchase.Id : null;\n  }\n  const cat = $('Category Gate').item.json;\n  return {\n    json: {\n      qbo_purchase_id: purchaseId,\n      qbo_attachable_id: attachableId,\n      category_account: cat.category_account,\n      category_source: cat.category_source,\n      category_confidence: cat.category_confidence\n    }\n  };\n} catch (e) {\n  throw new Error('Collect Post Result failed: ' + e.message);\n}"
+      },
+      "id": "ecf17af4-d9a4-42ab-8794-0a51a9598fa4",
+      "name": "Collect Post Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE receipt_expense.receipts SET status='POSTED', match_status=$2, matched_txn_id=$3, match_score=$4, match_basis_json=$5::jsonb, category_account=$6, category_source=$7, category_confidence=$8, qbo_attachable_id=$9, qbo_purchase_id=$10, updated_at=now() WHERE id=$1;",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Match Engine').item.json.match_status, $('Match Engine').item.json.matched_txn_id, $('Match Engine').item.json.match_score, JSON.stringify($('Match Engine').item.json.match_basis_json), $json.category_account, $json.category_source, $json.category_confidence, $json.qbo_attachable_id, $json.qbo_purchase_id ] }}"
+        }
+      },
+      "id": "298ee603-7bc9-4342-ba82-2757d8238c7b",
+      "name": "Finalise Post",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1264,
+        416
+      ],
+      "retryOnFail": false,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'CATEGORISED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ category_account: $('Collect Post Result').item.json.category_account, category_source: $('Collect Post Result').item.json.category_source, category_confidence: $('Collect Post Result').item.json.category_confidence }) ] }}"
+        }
+      },
+      "id": "3c65f220-0416-43c5-a162-63b15e00955c",
+      "name": "Log CATEGORISED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1488,
+        416
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'POSTED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ match_status: $('Match Engine').item.json.match_status, qbo_purchase_id: $('Collect Post Result').item.json.qbo_purchase_id, qbo_attachable_id: $('Collect Post Result').item.json.qbo_attachable_id }) ] }}"
+        }
+      },
+      "id": "2905e714-ee1c-479f-8abd-5ae3955b18b2",
+      "name": "Log POSTED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1696,
+        416
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.review_queue (receipt_id, workflow_run_id, reason, detail_json, status) VALUES ($1, $2, $3, $4::jsonb, 'OPEN') RETURNING id, reason;",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, $json.review_reason, JSON.stringify($json.review_detail || {}) ] }}"
+        }
+      },
+      "id": "bc626386-583f-421f-bca0-e2ea8cffe24a",
+      "name": "Insert Review Queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2368,
+        768
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0BEHL6SPKK",
+          "mode": "list",
+          "cachedResultName": "receipts"
+        },
+        "text": "=:receipt: Receipt needs review - *{{ $json.reason }}*\nReceipt id: {{ $('Create Receipt Row').item.json.id }}\nVendor: {{ $('Normalise & Mask Extraction').item.json.vendor_raw }}\nDate: {{ $('Normalise & Mask Extraction').item.json.receipt_date }}\nTotal (minor): {{ $('Normalise & Mask Extraction').item.json.total_minor }} {{ $('Normalise & Mask Extraction').item.json.currency_code }}\nSource: {{ $('Per-Candidate Loop').item.json.source_ref }}",
+        "otherOptions": {}
+      },
+      "id": "10f51f47-b1aa-4d4d-a0db-b08f50fd1788",
+      "name": "Slack Review Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -2144,
+        768
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "webhookId": "a31d4510-9426-4eb2-aad2-b81f237d19fe",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "ldJTjBH6oVO67Hkc",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE receipt_expense.review_queue SET slack_ts=$2, updated_at=now() WHERE id=$1;",
+        "options": {
+          "queryReplacement": "={{ [ $('Insert Review Queue').item.json.id, ($json.ts || null) ] }}"
+        }
+      },
+      "id": "87170fbb-f584-4fed-a806-81940bcd1ea0",
+      "name": "Update Review slack_ts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1920,
+        768
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE receipt_expense.receipts SET status='REVIEW', failed_check=$2, updated_at=now() WHERE id=$1;",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, ($('Validate').item.json.failed_check || null) ] }}"
+        }
+      },
+      "id": "1d05e4c7-c005-402d-9dba-6df5454298f5",
+      "name": "Update Receipt REVIEW",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1696,
+        768
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'REVIEW_QUEUED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ reason: $('Insert Review Queue').item.json.reason, review_queue_id: $('Insert Review Queue').item.json.id }) ] }}"
+        }
+      },
+      "id": "6a74d65e-ead4-416b-9e3b-f5378efc338f",
+      "name": "Log REVIEW_QUEUED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1488,
+        768
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE receipt_expense.receipts SET status='FAILED', failed_check=$2, updated_at=now() WHERE id=$1;",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, String((($json.error && ($json.error.message || $json.error.description)) || $json.error || 'PIPELINE_ERROR')).slice(0, 250) ] }}"
+        }
+      },
+      "id": "f12cb587-0795-4fba-9364-eccd4ecce979",
+      "name": "Mark FAILED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        480,
+        944
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO receipt_expense.receipt_events (receipt_id, workflow_run_id, event_type, event_data) VALUES ($1, $2, 'FAILED', $3::jsonb);",
+        "options": {
+          "queryReplacement": "={{ [ $('Create Receipt Row').item.json.id, $('Init Run').item.json.workflow_run_id, JSON.stringify({ error: String((($json.error && ($json.error.message || $json.error.description)) || $json.error || 'PIPELINE_ERROR')).slice(0, 500) }) ] }}"
+        }
+      },
+      "id": "da285b9f-7d7f-43e1-b2d6-90843f64a9b9",
+      "name": "Log FAILED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        704,
+        944
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "fgNBEakMkdS7I6zc",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const meta = {\n  AttachableRef: [\n    { EntityRef: { type: \"Purchase\", value: $('Match Engine').item.json.matched_txn.Id } }\n  ],\n  FileName: ($('Prepare Attachment Binary').item.json.filename || \"receipt.pdf\"),\n  ContentType: ($('Prepare Attachment Binary').item.json.mimeType || \"application/pdf\")\n};\n\nconst b = Buffer.from(JSON.stringify(meta), 'utf8');\n\nconst item = $input.item;\nitem.binary = item.binary || {};\nitem.binary.meta_json = {\n  data: b.toString('base64'),\n  mimeType: 'application/json',\n  fileName: 'metadata.json'\n};\nreturn item;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        240
+      ],
+      "id": "85e7ac72-beff-467a-a5e8-a73f290ed6c8",
+      "name": "Build Attach Metadata"
+    },
+    {
+      "parameters": {
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/purchase/{{ $('Match Engine').item.json.matched_txn.Id }}?minorversion=65",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        48,
+        224
+      ],
+      "id": "2fae5e86-444a-4966-a8a7-a31b5f88ced6",
+      "name": "Refetch Purchase",
+      "retryOnFail": true,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "WBXnXEXVxJCxZA0G",
+          "name": "QuickBooks Online account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=select * from Vendor"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -528,
+        464
+      ],
+      "id": "ba55416a-2960-4b13-bd82-6ca4ab1b1795",
+      "name": "Find Vendor",
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "WBXnXEXVxJCxZA0G",
+          "name": "QuickBooks Online account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Match extracted vendor to a QBO vendor by normalised name; carry category forward.\nconst want = String($('Normalise & Mask Extraction').item.json.vendor_norm || '');\nconst q = $json.QueryResponse;                 // Find Vendor output\nconst list = (q && q.Vendor) ? q.Vendor : [];\nconst norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');\n\nlet vendorId = null, vendorName = null;\nfor (const v of list) {\n  if (norm(v.DisplayName) === want) { vendorId = v.Id; vendorName = v.DisplayName; break; }\n}\n\nreturn {\n  json: {\n    category_account: $('Is Matched').item.json.category_account,\n    matched_vendor_id: vendorId,\n    matched_vendor_name: vendorName\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        464
+      ],
+      "id": "1087da0a-e61a-465c-a130-f7fd21dd0fbc",
+      "name": "Match Vendor"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://sandbox-quickbooks.api.intuit.com/v3/company/9341457036057924/upload?minorversion=65",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file_content_0",
+              "inputDataFieldName": "receipt_file"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file_metadata_0",
+              "inputDataFieldName": "meta_json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7aeb412d-7173-45df-b4af-da3c131381cd",
+      "name": "Attach Receipt Standalone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        640,
+        432
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "quickBooksOAuth2Api": {
+          "id": "WBXnXEXVxJCxZA0G",
+          "name": "QuickBooks Online account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n  const lb = $('Per-Candidate Loop').item;\n  const bin = (lb && lb.binary && lb.binary.receipt_file) ? lb.binary.receipt_file : null;\n  const mime = (bin && bin.mimeType) ? bin.mimeType : 'application/pdf';\n  const ext = mime.indexOf('pdf') >= 0 ? 'pdf' : (mime.indexOf('png') >= 0 ? 'png' : 'jpg');\n  return {\n    json: {\n      category_account: $json.category_account,\n      category_source: $json.category_source,\n      category_confidence: $json.category_confidence,\n      filename: 'receipt.' + ext,\n      mimeType: mime\n    },\n    binary: bin ? { receipt_file: bin } : {}\n  };\n} catch (e) {\n  throw new Error('Prepare Attachment Binary failed: ' + e.message);\n}"
+      },
+      "id": "113ed8f2-ef94-45c6-91ba-aef3a1dd9021",
+      "name": "Prepare Attachment Binary Standalone",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const meta = {\n  AttachableRef: [\n    { EntityRef: { type: \"Purchase\", value: $('Post Standalone Expense').item.json.Purchase.Id } }\n  ],\n  FileName: ($('Prepare Attachment Binary Standalone').item.json.filename || \"receipt.pdf\"),\n  ContentType: ($('Prepare Attachment Binary Standalone').item.json.mimeType || \"application/pdf\")\n};\n\nconst b = Buffer.from(JSON.stringify(meta), 'utf8');\n\nconst item = $input.item;\nitem.binary = item.binary || {};\nitem.binary.meta_json = {\n  data: b.toString('base64'),\n  mimeType: 'application/json',\n  fileName: 'metadata.json'\n};\nreturn item;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        432
+      ],
+      "id": "33d1d372-9bb1-449b-9f58-1c58629f0470",
+      "name": "Build Attach Metadata Standalone"
+    }
+  ],
+  "pinData": {
+    "Telegram Receipt Trigger": [
+      {
+        "json": {
+          "update_id": 135765693,
+          "message": {
+            "message_id": 4,
+            "from": {
+              "id": 1114741270,
+              "is_bot": false,
+              "first_name": "Debasanta👽",
+              "username": "omogigaT",
+              "language_code": "en"
+            },
+            "chat": {
+              "id": 1114741270,
+              "first_name": "Debasanta👽",
+              "username": "omogigaT",
+              "type": "private"
+            },
+            "date": 1782931610,
+            "photo": [
+              {
+                "file_id": "AgACAgQAAxkBAAMEakVgmohjuHsyPbxTWw79bP2JtaEAAnUPaxuXhyhS5P-zNbFNeh8BAAMCAANzAAM8BA",
+                "file_unique_id": "AQADdQ9rG5eHKFJ4",
+                "file_size": 1010,
+                "width": 62,
+                "height": 90
+              },
+              {
+                "file_id": "AgACAgQAAxkBAAMEakVgmohjuHsyPbxTWw79bP2JtaEAAnUPaxuXhyhS5P-zNbFNeh8BAAMCAANtAAM8BA",
+                "file_unique_id": "AQADdQ9rG5eHKFJy",
+                "file_size": 12259,
+                "width": 220,
+                "height": 320
+              },
+              {
+                "file_id": "AgACAgQAAxkBAAMEakVgmohjuHsyPbxTWw79bP2JtaEAAnUPaxuXhyhS5P-zNbFNeh8BAAMCAAN5AAM8BA",
+                "file_unique_id": "AQADdQ9rG5eHKFJ-",
+                "file_size": 42784,
+                "width": 620,
+                "height": 900
+              },
+              {
+                "file_id": "AgACAgQAAxkBAAMEakVgmohjuHsyPbxTWw79bP2JtaEAAnUPaxuXhyhS5P-zNbFNeh8BAAMCAAN4AAM8BA",
+                "file_unique_id": "AQADdQ9rG5eHKFJ9",
+                "file_size": 47806,
+                "width": 551,
+                "height": 800
+              }
+            ]
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Telegram Receipt Trigger": {
+      "main": [
+        [
+          {
+            "node": "Telegram Get File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Get File": {
+      "main": [
+        [
+          {
+            "node": "Normalise Telegram Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise Telegram Intake": {
+      "main": [
+        [
+          {
+            "node": "Init Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Receipt Trigger": {
+      "main": [
+        [
+          {
+            "node": "Split Email Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Email Attachments": {
+      "main": [
+        [
+          {
+            "node": "Is PDF Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is PDF Attachment": {
+      "main": [
+        [
+          {
+            "node": "Read PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalise Email Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Split PDF Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split PDF Pages": {
+      "main": [
+        [
+          {
+            "node": "Normalise Email Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise Email Intake": {
+      "main": [
+        [
+          {
+            "node": "Init Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Run": {
+      "main": [
+        [
+          {
+            "node": "Per-Candidate Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Per-Candidate Loop": {
+      "main": [
+        [
+          {
+            "node": "Run Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Receipt Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Receipt Row": {
+      "main": [
+        [
+          {
+            "node": "Log RECEIVED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log RECEIVED": {
+      "main": [
+        [
+          {
+            "node": "Vision Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Extract": {
+      "main": [
+        [
+          {
+            "node": "Normalise & Mask Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise & Mask Extraction": {
+      "main": [
+        [
+          {
+            "node": "Update Receipt EXTRACTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Receipt EXTRACTED": {
+      "main": [
+        [
+          {
+            "node": "Log EXTRACTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log EXTRACTED": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Validation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Gate": {
+      "main": [
+        [
+          {
+            "node": "Insert Review Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log VALIDATED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log VALIDATED": {
+      "main": [
+        [
+          {
+            "node": "Dedupe Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe Check": {
+      "main": [
+        [
+          {
+            "node": "Dedupe Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe Gate": {
+      "main": [
+        [
+          {
+            "node": "Update SKIPPED_DUPLICATE",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Candidate Txns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update SKIPPED_DUPLICATE": {
+      "main": [
+        [
+          {
+            "node": "Log DUPLICATE_DETECTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log DUPLICATE_DETECTED": {
+      "main": [
+        [
+          {
+            "node": "Per-Candidate Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Candidate Txns": {
+      "main": [
+        [
+          {
+            "node": "Match Engine",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Engine": {
+      "main": [
+        [
+          {
+            "node": "Is Ambiguous Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Ambiguous Match": {
+      "main": [
+        [
+          {
+            "node": "Insert Review Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Match Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Match Result": {
+      "main": [
+        [
+          {
+            "node": "Rules Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rules Engine": {
+      "main": [
+        [
+          {
+            "node": "Rule Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rule Found": {
+      "main": [
+        [
+          {
+            "node": "Set Category from Rule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OpenAI Categorise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Category from Rule": {
+      "main": [
+        [
+          {
+            "node": "Category Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Categorise": {
+      "main": [
+        [
+          {
+            "node": "Parse Category",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Category": {
+      "main": [
+        [
+          {
+            "node": "Category Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Category Gate": {
+      "main": [
+        [
+          {
+            "node": "Insert Review Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Matched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Matched": {
+      "main": [
+        [
+          {
+            "node": "Prepare Attachment Binary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Vendor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Attachment Binary": {
+      "main": [
+        [
+          {
+            "node": "Build Attach Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Receipt": {
+      "main": [
+        [
+          {
+            "node": "Refetch Purchase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recode Purchase": {
+      "main": [
+        [
+          {
+            "node": "Collect Post Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Standalone Expense": {
+      "main": [
+        [
+          {
+            "node": "Prepare Attachment Binary Standalone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Post Result": {
+      "main": [
+        [
+          {
+            "node": "Finalise Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalise Post": {
+      "main": [
+        [
+          {
+            "node": "Log CATEGORISED",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log CATEGORISED": {
+      "main": [
+        [
+          {
+            "node": "Log POSTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log POSTED": {
+      "main": [
+        [
+          {
+            "node": "Per-Candidate Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Review Queue": {
+      "main": [
+        [
+          {
+            "node": "Slack Review Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Review Notification": {
+      "main": [
+        [
+          {
+            "node": "Update Review slack_ts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Review slack_ts": {
+      "main": [
+        [
+          {
+            "node": "Update Receipt REVIEW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Receipt REVIEW": {
+      "main": [
+        [
+          {
+            "node": "Log REVIEW_QUEUED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log REVIEW_QUEUED": {
+      "main": [
+        [
+          {
+            "node": "Per-Candidate Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark FAILED": {
+      "main": [
+        [
+          {
+            "node": "Log FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log FAILED": {
+      "main": [
+        [
+          {
+            "node": "Per-Candidate Loop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Attach Metadata": {
+      "main": [
+        [
+          {
+            "node": "Attach Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refetch Purchase": {
+      "main": [
+        [
+          {
+            "node": "Recode Purchase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Vendor": {
+      "main": [
+        [
+          {
+            "node": "Match Vendor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Vendor": {
+      "main": [
+        [
+          {
+            "node": "Post Standalone Expense",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Receipt Standalone": {
+      "main": [
+        [
+          {
+            "node": "Collect Post Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Attachment Binary Standalone": {
+      "main": [
+        [
+          {
+            "node": "Build Attach Metadata Standalone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Attach Metadata Standalone": {
+      "main": [
+        [
+          {
+            "node": "Attach Receipt Standalone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "dd616b57-29bf-4d86-86c1-c3fe3f6e8433",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f6b6e576484f18b45b6dc36cc982a348499e65e07ca831d33a7ac0dee6208d03"
+  },
+  "nodeGroups": [],
+  "id": "4dPfYK5GlTJKv6Vx",
+  "tags": []
+}

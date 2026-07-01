@@ -44,9 +44,9 @@ Stripe and Shopify payout reconciliation that breaks down the fees, refunds, and
 
 Your bank feed lands in Xero and most of it has no suggestion waiting. This reads the statement, proposes a match against your invoices and bills or a category against your chart of accounts, and hands you a queue of decisions instead of a wall of raw lines. Rules first, AI second, human review third, and it learns from your corrections so the same vendor never needs a decision twice. **[Shipped → Read the case study](./xero-bank-reconciliation-engine/README.md)**
 
-### Month-end close orchestration
+### Receipt & Expense Matcher
 
-The checklist that runs your close, sequences the dependencies (bank rec before AR close, AR before AP cutoff, accruals before reports), and routes approvals at the right gates. **Coming soon.**
+Card receipts arrive by photo or email, get read, matched to the already-posted card charge they belong to, attached as documentation, and recoded from Uncategorized Expense to the right account. Anything uncertain, a tip-band amount, a foreign-currency receipt, a category the rules do not cover, goes to a human on Slack. **[Shipped → Read the case study](./quickbooks-receipt-expense-automation/README.md)**
 
 ### Logic-driven journal automation
 
@@ -86,15 +86,15 @@ Everything I build has explicit validation, human-review gates where they matter
 
 ## Portfolio workflows
 
-| Workflow                                                                                 | Status         | What it does                                                                                                 |
-| ---------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------ |
-| [QuickBooks AP Invoice Automation](./quickbooks-ap-invoice-automation/README.md)         | Shipped        | Bills get coded, approved, and posted with five validation checks and immutable audit log                    |
-| [QuickBooks AR Collections Automation](./quickbooks-ar-collections-automation/README.md) | Shipped        | Overdue invoices get chased politely, escalated when needed, and the sequence stops the moment payment lands |
-| [Xero Payment Processor Reconciliation](./xero-payment-processor-reconciliation/README.md) | Shipped        | Stripe and Shopify payouts decomposed into balanced Xero Manual Journals with append-only audit log          |
-| [Xero Bank Reconciliation Engine](./xero-bank-reconciliation-engine/README.md)           | Shipped        | Bank statement lines matched to invoices and bills or categorised to accounts, proposed for human reconcile  |
-| Month-End Close Orchestrator                                                             | Planned        | Checklist-driven close with dependency sequencing and approval gates                                         |
-| Cash Flow Forecasting Engine                                                             | Planned        | 13-week rolling forecast with liquidity risk flags                                                           |
-| Client Document Collection Bot                                                           | Planned        | Automated KYC, W-9, and engagement letter capture for accounting firms                                       |
+| Workflow                                                                                   | Status  | What it does                                                                                                     |
+| ------------------------------------------------------------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| [QuickBooks AP Invoice Automation](./quickbooks-ap-invoice-automation/README.md)           | Shipped | Bills get coded, approved, and posted with five validation checks and immutable audit log                        |
+| [QuickBooks AR Collections Automation](./quickbooks-ar-collections-automation/README.md)   | Shipped | Overdue invoices get chased politely, escalated when needed, and the sequence stops the moment payment lands     |
+| [Xero Payment Processor Reconciliation](./xero-payment-processor-reconciliation/README.md) | Shipped | Stripe and Shopify payouts decomposed into balanced Xero Manual Journals with append-only audit log              |
+| [Xero Bank Reconciliation Engine](./xero-bank-reconciliation-engine/README.md)             | Shipped | Bank statement lines matched to invoices and bills or categorised to accounts, proposed for human reconcile      |
+| [QuickBooks Receipt & Expense Matcher](./quickbooks-receipt-expense-automation/README.md)  | Shipped | Receipts matched to posted card charges, attached, and recoded, with a human-review queue for anything uncertain |
+| Cash Flow Forecasting Engine                                                               | Planned | 13-week rolling forecast with liquidity risk flags                                                               |
+| Client Document Collection Bot                                                             | Planned | Automated KYC, W-9, and engagement letter capture for accounting firms                                           |
 
 ---
 
