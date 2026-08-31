@@ -1,6 +1,6 @@
 # QuickBooks Receipt & Expense Matcher
 
-**Built for bookkeepers and finance teams whose card spend hits the books as unlabelled charges with no receipt attached to prove any of it.**
+**Built for SMB founders whose card spend hits the books as a pile of unlabelled money out, with no receipt attached to prove any of it.**
 
 Status: Shipped. Tested end to end against a live QuickBooks Online sandbox. Six execution paths verified, both intake channels working, real attachments on real transactions, real Slack review notifications, and a full append-only audit trail. [Skip to the evidence](#what-actually-runs).
 
@@ -8,11 +8,11 @@ Status: Shipped. Tested end to end against a live QuickBooks Online sandbox. Six
 
 ## The problem this solves
 
-The team spends on the company card all week. A tank of fuel, a run to the hardware store, lunch with a client, a load of plants for a job. Each swipe lands in QuickBooks through the card feed as a line that says nothing more than the amount and a mangled merchant code, sitting in Uncategorized Expense. The receipts, the actual proof of what the money bought, live in a glovebox, a coat pocket, or a forwarded email nobody opened.
+Your team spends on the company card all week. A tank of fuel, a run to the hardware store, lunch with a client, a load of plants for a job. Each swipe lands in QuickBooks through the card feed as a line that says nothing more than the amount and a mangled merchant code, sitting in Uncategorized Expense. The receipts, the actual proof of what the money bought, live in a glovebox, a coat pocket, or a forwarded email nobody opened.
 
 Come month end, or worse come audit or tax time, someone has to reunite the two. Open each uncategorised charge, work out what it was, pick the right account, hunt for the receipt, and staple it on. It is slow, it is easy to get wrong, and it is exactly the work that gets skipped until a deadline forces it. Unsubstantiated expenses are not a small problem either: a deduction without a receipt behind it is a deduction that does not survive scrutiny.
 
-Bigger companies throw Expensify, Ramp, or Dext at this. Good tools. They also charge per user, per month, and they want to be the system of record, which means another subscription and another place the data lives. If the client already pays for QuickBooks, they do not need a second finance platform layered on top. They need the receipts matched to the charges already in their books, coded correctly, and filed, without anyone opening a single transaction by hand.
+Bigger companies throw Expensify, Ramp, or Dext at this. Good tools. They also charge per user, per month, and they want to be the system of record, which means another subscription and another place your data lives. If you are an SMB founder who already pays for QuickBooks, you do not need a second finance platform. You need the receipts matched to the charges already in your books, coded correctly, and filed, without you opening a single transaction by hand.
 
 That is what this builds.
 
@@ -74,15 +74,15 @@ Both hard gates must pass for a charge to qualify. Then a weighted score across 
 
 ### 5. On a confident match
 
-The receipt is attached to that exact charge as documentation, and the charge is recoded from Uncategorized Expense to the correct account. The transaction does not move anywhere; it stays where it is in the books and simply becomes correct and documented.
+The receipt is attached to that exact charge as documentation, and the charge is recoded from Uncategorized Expense to the correct account. The transaction does not move anywhere; it stays where it is in your books and simply becomes correct and documented.
 
 ### 6. On no match
 
-Receipts often arrive before the card feed posts. When nothing matches, the system posts a fresh standalone expense from the receipt, coded and dated correctly, with the vendor resolved against the QuickBooks vendor list, the receipt attached, and a memo flagging it as receipt-originated and pending the eventual bank match. Nothing is lost just because the feed was slow.
+Receipts often arrive before the card feed posts. When nothing matches, the system posts a fresh standalone expense from the receipt, coded and dated correctly, with the vendor resolved against your QuickBooks vendor list, the receipt attached, and a memo flagging it as receipt-originated and pending the eventual bank match. Nothing is lost just because the feed was slow.
 
 ### 7. Categorisation
 
-A rules engine runs first: vendor patterns mapped to real account ids in a table you control. Where no rule fits, the AI suggests an account, but only from the actual chart of accounts, and a numeric-id guard blocks any answer that is not a real account. Below a confidence threshold, it goes to review.
+A rules engine runs first: vendor patterns mapped to real account ids in a table you control. Where no rule fits, the AI suggests an account, but only from your actual chart of accounts, and a numeric-id guard blocks any answer that is not a real account. Below a confidence threshold, it goes to review.
 
 ### 8. Review queue
 
@@ -106,7 +106,7 @@ This is where the ACA training shows up. The same posture as the rest of the por
 6. **Structured errors, no silent failures.** A receipt that cannot complete ends in a FAILED state with the failing check recorded, not a swallowed error.
 7. **Retries on every external call.** QuickBooks, OpenAI, Supabase, Slack, Telegram, and Gmail all retry with backoff.
 8. **Fresh-token writes.** Every QuickBooks update refetches the transaction immediately before writing, so a stale sync token can never clobber a concurrent change.
-9. **Constrained AI.** The categorisation model chooses only from the real chart of accounts and returns an account id, and a numeric guard rejects anything else, so the AI can never post an invented account.
+9. **Constrained AI.** The categorisation model chooses only from your real chart of accounts and returns an account id, and a numeric guard rejects anything else, so the AI can never post an invented account.
 
 ---
 
@@ -161,23 +161,23 @@ If you are on Xero rather than QuickBooks Online, the architecture transfers. Th
 
 ---
 
-## What this would cost to run
+## What this would cost to run for you
 
 The honest answer depends on receipt volume, but the variables are small:
 
 - **n8n hosting.** Self-hosted on a small VPS is 5 to 15 dollars a month.
-- **Supabase.** The free tier covers the audit log comfortably; the Pro tier at 25 dollars a month adds backups and longer retention.
+- **Supabase.** The free tier covers an SMB audit log comfortably; the Pro tier at 25 dollars a month adds backups and longer retention.
 - **OpenAI.** Vision extraction and categorisation run a few cents per receipt. A business processing a few hundred receipts a month spends single-digit dollars.
-- **Telegram and Gmail.** Free at typical volume.
-- **The build itself.** A fixed-price pilot, scoped to the chart of accounts and the shape of the card spend.
+- **Telegram and Gmail.** Free at SMB volume.
+- **The build itself.** A fixed-price pilot, scoped to your chart of accounts and the shape of your card spend.
 
-Total ongoing infrastructure lands around 30 to 50 dollars a month. Compare that against the hours spent reuniting receipts with charges every month and the math is straightforward.
+Total ongoing infrastructure lands around 30 to 50 dollars a month. Compare that against the hours a bookkeeper spends reuniting receipts with charges every month and the math is straightforward.
 
 ---
 
 ## How I worked on this
 
-Built against a live QuickBooks sandbox, tested path by path, fixed what broke, repeated. The same way I work on client engagements. A few of the things that only surface when you actually run it against real QuickBooks, and that a build which was never tested end to end would miss:
+Built against a live QuickBooks sandbox, tested path by path, fixed what broke, repeated. The same way I would work on yours. A few of the things that only surface when you actually run it against real QuickBooks, and that a build which was never tested end to end would miss:
 
 1. **The QuickBooks attachment endpoint is not a normal JSON post.** It is a multipart upload with a separate file part and a JSON metadata part, and each part needs its own content type. Discovered by hitting the exact error QuickBooks throws when you send it plain text, then building the metadata as a real JSON part.
 2. **A Purchase update needs PaymentType and the paid-from account even on a sparse edit.** Recoding a single line still has to echo those fields back, or QuickBooks rejects the whole update.
@@ -191,12 +191,12 @@ Every compliance control was tested deliberately, not assumed. The append-only t
 
 ## Get in touch
 
-If you are a bookkeeper spending month-end reuniting charges with paper, a fractional CFO cleaning up unsubstantiated spend across a client portfolio, or a finance team where card receipts are the last thing anyone gets to: the fastest way to find out if I am the right person to build this is a 30-minute scoping call.
+If you are an SMB founder drowning in card receipts, a fractional CFO cleaning up unsubstantiated spend across a client portfolio, or a bookkeeper who spends month-end reuniting charges with paper, and this looks like it would give you that week back, the fastest way to find out if I am the right person to build it is a 30-minute scoping call.
 
-I will map how receipts move through the business today, tell you whether automation is the right answer, and quote a fixed price if it is. If it is not the right fit, I will say so.
+I will map how receipts move through your business today, tell you whether automation is the right answer, and quote a fixed price if it is. If it is not the right fit, I will say so.
 
 - **Upwork:** [tabitha-eoke on Upwork](https://www.upwork.com/freelancers/~01954f73840469cae5)
-- **LinkedIn:** [linkedin.com/in/tabitha-oke](https://www.linkedin.com/in/tabitha-oke-n8n)
+- **LinkedIn:** [linkedin.com/in/tabitha-oke-n8n](https://www.linkedin.com/in/tabitha-oke-n8n)
 - **Email:** tabithaeoke@gmail.com
 
 I respond within one business day.

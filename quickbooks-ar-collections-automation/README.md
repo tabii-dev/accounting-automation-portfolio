@@ -1,20 +1,20 @@
 # AR Collections Agent — QuickBooks Online
 
-**Built for SMB founders who are tired of being their own collections department.**
+**Built for bookkeepers, fractional CFOs, and any finance team where invoice chasing runs on memory instead of a system.**
 
-Status: Shipped. Tested end-to-end against a live QuickBooks Online sandbox. Five execution paths verified. Real audit trail, real emails, real Slack notifications. [Skip to the evidence](#what-actually-runs).
+Status: Shipped. Tested end to end against a live QuickBooks Online sandbox. Five execution paths verified. Real audit trail, real emails, real Slack notifications. [Skip to the evidence](#what-actually-runs).
 
 ---
 
 ## The problem this solves
 
-You sent the invoice. The customer didn't pay. Now your week looks like this: open QuickBooks, run the AR aging report, scan for anything over 30 days, draft a reminder email, send it, copy yourself, log it somewhere, repeat for the next overdue invoice, and try not to forget to follow up in two weeks if they still don't pay.
+Invoices go overdue. The chasing begins. Open QuickBooks, run the AR aging report, scan for anything past 30 days, draft a reminder email, send it, copy yourself, log it somewhere, repeat for the next one, try not to forget to follow up in two weeks. If you are a bookkeeper managing this for several clients, multiply that loop by every client on your book. If you are a fractional CFO, every hour you spend chasing is an hour that does not go to advisory work.
 
-This is the workflow nearly every small business owner I've spoken to runs manually. The numbers around it are ugly: nearly 90% of businesses report that around 30% of invoices are paid late. For companies extending payments beyond 30 days, an average 4.6% of revenue is lost to payment uncertainty. The chasing is the work, and the chasing doesn't earn you anything; it just protects what you already earned.
+The numbers around it are ugly: nearly 90% of businesses report that around 30% of invoices are paid late. For companies extending payments beyond 30 days, an average 4.6% of revenue is lost to payment uncertainty. The chasing is the work, and it earns nothing; it just protects what was already earned.
 
-Bigger companies solve this with HighRadius, Versapay, or Chaser. Those are good products. They also charge per user, per transaction, and assume you have an AR clerk. If you're an SMB founder doing AR yourself between actual customer work, you don't need an enterprise AR platform. You need the chasing to happen without you, in your voice, with rules you can read in plain English, and a way to know what your automation said to which customer when.
+Larger companies solve this with HighRadius, Versapay, or Chaser. Good products. They also charge per user, per transaction, and assume a dedicated AR clerk. A bookkeeper managing ten clients, or a founder doing AR between actual customer work, does not need an enterprise platform. They need the chasing to happen on its own, in the right voice, with rules they can read in plain English, and a record of what the automation said to which customer and when.
 
-That's what this builds.
+That is what this builds.
 
 ---
 
@@ -27,10 +27,10 @@ When an invoice goes overdue in QuickBooks Online, the system sends polite, pers
 - It does not call customers, send SMS, or use WhatsApp. Email only.
 - It does not apply payments to invoices. QuickBooks does that natively when the bank feed clears.
 - It does not write off invoices, change terms, or make credit decisions.
-- It does not auto-generate email copy with an LLM. Templates are deterministic with merge fields, so what your customer sees is what you'd write yourself.
+- It does not auto-generate email copy with an LLM. Templates are deterministic with merge fields, so what the customer sees is what you would write yourself.
 - It does not analyse customer sentiment. If a customer replies, a human takes over.
 
-The discipline here is deliberate. SMB AR automation that quietly does too much is how you end up emailing a customer about an invoice they already disputed by phone.
+The discipline here is deliberate. AR automation that quietly does too much is how you end up emailing a customer about an invoice they already disputed by phone.
 
 ---
 
@@ -43,11 +43,11 @@ Two production workflows plus a shared error notifier. About 30 nodes total acro
 Runs daily on a cron. Fetches every overdue invoice from QuickBooks. For each one, the workflow:
 
 1. Pulls the customer record and relationship tag (standard / long-term-trusted / new) from a small Supabase table you manage.
-2. Checks whether the customer is on a global pause (e.g., they're disputing something and shouldn't be chased on anything).
+2. Checks whether the customer is on a global pause (e.g., they are disputing something and should not be chased on anything).
 3. Computes days overdue against the invoice's due date.
 4. Decides the action based on the schedule below.
-5. Checks the audit log to confirm we haven't already sent this exact reminder today (idempotency).
-6. Checks the customer hasn't already received two reminder emails in the past seven days (rate limit).
+5. Checks the audit log to confirm we have not already sent this exact reminder today (idempotency).
+6. Checks the customer has not already received two reminder emails in the past seven days (rate limit).
 7. Sends a templated email via Gmail, posts an escalation to Slack, or exits silently if no action is due.
 8. Writes a row to the immutable audit log recording what was decided and what was done.
 
@@ -66,15 +66,15 @@ Triggered by a QuickBooks webhook on Invoice updates. When an invoice's balance 
 
 ## Compliance controls baked in
 
-This is where ACA training shows up. Eleven controls, lighter than the AP Invoice Orchestrator's because AR doesn't touch the general ledger, but the same posture:
+This is where ACA training shows up. Eleven controls, lighter than the AP Invoice Orchestrator's because AR does not touch the general ledger, but the same posture:
 
 1. **Idempotency guard.** A unique index on `(invoice_id, sequence_step, UTC date)` means running the workflow twice in one day sends one email, not two.
-2. **Append-only audit log.** Postgres trigger blocks DELETE entirely and blocks UPDATE on identity fields. Status changes are allowed (that's how WF02 marks rows RESOLVED), but the original action record is immutable.
+2. **Append-only audit log.** Postgres trigger blocks DELETE entirely and blocks UPDATE on identity fields. Status changes are allowed (that is how WF02 marks rows RESOLVED), but the original action record is immutable.
 3. **PII redaction.** Customer email addresses are hashed to an 8-character prefix before persistence. The raw email is used to send the message and never written to Supabase.
 4. **Per-customer rate limit.** No customer receives more than two reminders in any rolling 7-day window across all their invoices. Prevents the "three overdue invoices = three emails on the same morning" failure mode.
 5. **Per-sequence pause.** Owner can mark any specific dunning sequence as PAUSED via the audit log. Workflow respects it.
 6. **Per-customer pause.** Owner can mark any customer with `pause_all = TRUE` via the customer_tags table. Workflow skips them entirely until cleared.
-7. **Reply detection.** If a customer replies to a reminder, the owner sees the reply in Gmail and manually pauses the sequence. No automated reply parsing in v1 — that's a v2 feature once we have enough conversation data to train against.
+7. **Reply detection.** If a customer replies to a reminder, the owner sees the reply in Gmail and manually pauses the sequence. No automated reply parsing in v1. That is a v2 feature once there is enough conversation data to train against.
 8. **Retry configuration.** Every external call (QuickBooks API, Gmail, Slack, Supabase) has retryOnFail with three retries and exponential backoff.
 9. **Structured Slack escalations.** Owner gets full context for 60+ day overdue invoices: customer name, balance, days overdue, last contact, relationship tag.
 10. **Untagged-customer safety.** Customers without an assigned relationship tag default to "standard" rather than erroring. Means you can onboard new customers in QuickBooks without breaking the workflow.
@@ -84,17 +84,17 @@ This is where ACA training shows up. Eleven controls, lighter than the AP Invoic
 
 ## What actually runs
 
-Five execution paths tested end-to-end against Craig's Design and Landscaping Services, the QuickBooks Online sandbox company. All five passed. Screenshots below are live evidence, not staged.
+Five execution paths tested end to end against Craig's Design and Landscaping Services, the QuickBooks Online sandbox company. All five passed. Screenshots below are live evidence, not staged.
 
 ### Workflow architecture
 
 ![WF01 canvas](./screenshots/wf01-canvas.png)
 
-*WF01: AR Collections Orchestrator, daily cron, 21 nodes. Notice the loop-back pattern from every early-exit IF back to Split In Batches — per-invoice failures don't abort the whole run.*
+*WF01: AR Collections Orchestrator, daily cron, 21 nodes. Notice the loop-back pattern from every early-exit IF back to Split In Batches. Per-invoice failures do not abort the whole run.*
 
 ![WF02 canvas](./screenshots/wf02-canvas.png)
 
-*WF02: Payment Detected Handler, QBO webhook, 9 functional nodes. Webhook responds 200 immediately so QuickBooks doesn't time out and re-deliver.*
+*WF02: Payment Detected Handler, QBO webhook, 9 functional nodes. Webhook responds 200 immediately so QuickBooks does not time out and re-deliver.*
 
 ### Live audit log
 
@@ -106,23 +106,23 @@ Five execution paths tested end-to-end against Craig's Design and Landscaping Se
 
 ![Customer tags table with real customer data](./screenshots/customer-tags.png)
 
-*Eight customers tagged across three relationship tiers. Untagged customers default to "standard" — no manual setup required to onboard new customers.*
+*Eight customers tagged across three relationship tiers. Untagged customers default to "standard". No manual setup required to onboard new customers.*
 
 ### Reminder emails sent
 
 ![Day-1 reminder email to Kookies by Kathy](./screenshots/day-1-reminder.png)
 
-*Day-1 reminder. Note the "balance" language (not "invoice amount") — handles partial payments cleanly because the same template works whether the invoice is fully unpaid or partially paid.*
+*Day-1 reminder. Note the "balance" language (not "invoice amount"). Handles partial payments cleanly because the same template works whether the invoice is fully unpaid or partially paid.*
 
 ![Day-21 reminder email to Freeman Sporting Goods](./screenshots/day-21-reminder.png)
 
-*Day-21 reminder, firmer tone, still in the owner's voice. This one went to a partially-paid invoice where $4 was outstanding from an original $54.*
+*Day-21 reminder, firmer tone, still in the owner's voice. This one went to a partially paid invoice where $4 was outstanding from an original $54.*
 
 ### Escalations to Slack
 
 ![Slack escalation channel](./screenshots/ar-collections-slack.png)
 
-*60+ day overdue invoices escalate to the owner. No automated email is sent at this stage — the workflow flags it and steps back, because at 60 days the right answer is usually a phone call, not another email.*
+*60+ day overdue invoices escalate to the owner. No automated email is sent at this stage. The workflow flags it and steps back, because at 60 days the right answer is usually a phone call, not another email.*
 
 ### Payment detected, sequence cancelled
 
@@ -138,46 +138,46 @@ Five execution paths tested end-to-end against Craig's Design and Landscaping Se
 
 ---
 
-## What's deferred to v2
+## What is deferred to v2
 
-Honest about this list, because vendors who promise everything are the ones SMB buyers learn to distrust.
+Honest about this list, because builders who promise everything are the ones buyers learn to distrust.
 
 - **Multi-currency.** USD only in v1. Multi-currency adds FX rate handling and revaluation logic that earns its own scope.
 - **SMS / WhatsApp / voice escalation.** Email plus Slack only. Adding channels means adding consent management, channel preference per customer, and quiet-hours logic.
 - **Tolerance-based payment matching.** If a customer pays $99 on a $100 invoice, v1 leaves it open. v2 adds a tolerance band.
-- **LLM-generated reminder copy with brand voice training.** Templates only in v1. Worth doing later, once we have enough sent-and-replied-to email data to train against.
+- **LLM-generated reminder copy with brand voice training.** Templates only in v1. Worth doing later, once there is enough sent-and-replied-to email data to train against.
 - **Webhook signature verification.** v1 uses an obscured webhook path. v2 verifies the `intuit-signature` HMAC-SHA256 header.
-- **Reporting dashboard.** v1 reporting is direct SQL queries against the audit log. A dashboard with DSO trend, collection rate, and average days outstanding is worth building once there's enough audit data to make trends meaningful.
+- **Reporting dashboard.** v1 reporting is direct SQL queries against the audit log. A dashboard with DSO trend, collection rate, and average days outstanding is worth building once there is enough audit data to make trends meaningful.
 - **Customer self-service portal.** v2 work, if it earns its place.
 
 ---
 
 ## The stack
 
-QuickBooks Online (sandbox + production), n8n self-hosted or Cloud, Supabase Postgres, Gmail OAuth for transactional email, Slack for owner notifications. Roughly 30 nodes across the two workflows. Audit log table with append-only Postgres triggers. Reuses the error notifier from the AP Invoice Orchestrator project — one shared notifier across the portfolio because that's how a real ops team works.
+QuickBooks Online (sandbox and production), n8n self-hosted or Cloud, Supabase Postgres, Gmail OAuth for transactional email, Slack for owner notifications. Roughly 30 nodes across the two workflows. Audit log table with append-only Postgres triggers. Reuses the error notifier from the AP Invoice Orchestrator project, because one shared notifier across a production portfolio is how a real ops setup works.
 
-If you're on Xero instead of QuickBooks Online, the same architecture transfers; Xero's API surface is different but the workflow patterns and compliance controls don't change. Same applies to Zoho Books, FreeAgent, or any accounting system with a reasonable REST API.
+If you are on Xero instead of QuickBooks Online, the same architecture transfers; Xero's API surface is different but the workflow patterns and compliance controls do not change. Same applies to Zoho Books, Sage, or any accounting system with a reasonable REST API.
 
 ---
 
-## What this would cost to run for you
+## What this would cost to run
 
-The honest answer depends on the shape of your AR, but here are the variables:
+The honest answer depends on the shape of the AR, but here are the variables:
 
-- **Email volume.** Gmail has free sending limits well above what an SMB needs. If you exceed them, transactional email providers (Postmark, SendGrid) are $10-$30/month.
-- **n8n hosting.** Self-hosted on a small VPS is $5-$15/month. n8n Cloud is $20/month for the starter plan.
-- **Supabase.** Free tier covers an SMB audit log comfortably. Pro tier ($25/month) if you want backups and longer retention.
-- **The build itself.** Fixed-price pilot for a single customer engagement, typically two-to-six weeks depending on the QBO/Xero account shape and how many customer relationship tiers you need.
+- **Email volume.** Gmail has free sending limits well above what most practices need. If volume exceeds them, transactional email providers (Postmark, SendGrid) are $10 to $30 a month.
+- **n8n hosting.** Self-hosted on a small VPS is $5 to $15 a month. n8n Cloud is $20 a month for the starter plan.
+- **Supabase.** Free tier covers the audit log comfortably. Pro tier ($25 a month) if you want backups and longer retention.
+- **The build itself.** Fixed-price pilot, typically two to six weeks depending on the QBO or Xero account shape and how many customer relationship tiers you need.
 
-Total ongoing infrastructure: $25-$70/month, depending on volume. Compare against an AR clerk's time at SMB founder rates and the math is straightforward.
+Total ongoing infrastructure: $25 to $70 a month, depending on volume. Compare against the hours currently going to manual chasing and the math is straightforward.
 
 ---
 
 ## How I worked on this
 
-Two weeks of build time from kickoff to shipped. Worked the same way I'll work on yours:
+Two weeks of build time from kickoff to shipped. Worked the same way I work on client engagements:
 
-1. Read the actual QuickBooks API response shape before writing parsing logic. Customer custom fields don't surface in the QBO API the way you'd expect — discovered that on day one, moved relationship tags to Supabase instead of QBO custom fields, avoided a class of bugs.
+1. Read the actual QuickBooks API response shape before writing parsing logic. Customer custom fields do not surface in the QBO API the way you would expect. Discovered that on day one, moved relationship tags to Supabase instead of QBO custom fields, avoided a class of bugs.
 2. Configured manually for the first week. Tagged customers by hand in Supabase. Ran the workflow against pinned fixtures before running it against live data.
 3. One commit per discrete change. If something broke at midnight on day six, the previous green state was always a `git checkout` away.
 4. Tested every compliance control deliberately. The append-only trigger was tested by trying to DELETE a row and confirming the database rejected it. The idempotency guard was tested by running WF01 twice in one day and confirming the second run sent zero emails.
@@ -186,12 +186,12 @@ Two weeks of build time from kickoff to shipped. Worked the same way I'll work o
 
 ## Get in touch
 
-If you're an SMB founder, a fractional CFO, or a bookkeeper running AR for SMB clients, and the workflow above looks like it would save you a week of chasing per month, the fastest way to know if I'm the right person to build this for you is a 30-minute scoping call.
+If you are a bookkeeper managing AR for client portfolios, a fractional CFO whose advisory hours keep disappearing into chasing, or a finance team running collections manually, and this looks like it would take that work off your plate: the fastest way to find out is a 30-minute scoping call.
 
-I'll map your AR process end to end on the call, tell you whether automation is the right answer, and quote a fixed price if it is. If it isn't, I'll say so.
+I will map your AR process end to end, tell you whether automation is the right answer, and quote a fixed price if it is. If it is not the right fit, I will say so.
 
 - **Upwork:** [tabitha-eoke on Upwork](https://www.upwork.com/freelancers/~01954f73840469cae5)
-- **LinkedIn:** [linkedin.com/in/tabitha-oke-n8n](https://www.linkedin.com/in/tabitha-oke-n8n)
+- **LinkedIn:** [linkedin.com/in/tabitha-oke](https://www.linkedin.com/in/tabitha-oke-n8n)
 - **Email:** tabithaeoke@gmail.com
 
 I respond within one business day.
