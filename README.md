@@ -6,7 +6,7 @@ Your client's Stripe payouts land in the bank feed as a single deposit while A2X
 
 The integrations exist. The sync does not. Making them sync, keeping them that way month after month, and building the reporting and automation layers that let you trust the numbers at close: that is the work I do.
 
-I'm Tabitha. I'm a chartered accountant (ICAN ACA, AAT, Xero Advisor) who builds technology for finance and accounting teams. The combination matters here: diagnosing why a payout processor and a ledger disagree is an accounting problem before it is a technical problem. I read the chart of accounts, trace the money, find the gap, and build the fix. Sometimes that means configuring the tools you already have so they talk to each other properly. Sometimes it means custom automation to close a gap no native integration covers. Sometimes it means a reporting layer that pulls clean numbers out of a stack that is finally in agreement. The credential is not decoration. It is the reason the technical work lands right.
+I'm Tabitha. I'm an accountant who builds technology for finance and accounting teams. The combination matters here: diagnosing why a payout processor and a ledger disagree is an accounting problem before it is a technical problem. I read the chart of accounts, trace the money, find the gap, and build the fix. Sometimes that means configuring the tools you already have so they talk to each other properly. Sometimes it means custom automation to close a gap no native integration covers. Sometimes it means a reporting layer that pulls clean numbers out of a stack that is finally in agreement. The credential is not decoration. It is the reason the technical work lands right.
 
 ---
 
