@@ -117,8 +117,6 @@ Everything I build has explicit validation, human-review gates where they matter
 
 **Audit and improvement.** For teams that already have integrations and automation in place but suspect the setup is not as clean or reliable as it should be. I review the current stack configuration, write up what works, what does not, and what specifically needs to change.
 
-I do not sell hours and I do not sell seats. I sell working systems.
-
 ---
 
 ## Get in touch
